@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS `character_arena_replays` (
   `contentSize` int NULL DEFAULT NULL,
   `contents` longblob NULL,
   `mapId` int NULL DEFAULT NULL,
-  `savedBy` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT '0',
   `timestamp` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
