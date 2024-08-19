@@ -95,7 +95,6 @@ class ArenaReplayServerScript : public ServerScript
 public:
     ArenaReplayServerScript() : ServerScript("ArenaReplayServerScript") {}
 
-
     bool CanPacketSend(WorldSession* session, WorldPacket& packet) override
     {
         if (session == nullptr || session->GetPlayer() == nullptr)
@@ -163,6 +162,8 @@ public:
         if (replayId == 0)
             return;
 
+        //if (!bg->isArena() || !bg->IsRated()) return;
+
         int32 startDelayTime = bg->GetStartDelayTime();
         if (startDelayTime > 1000) // reduces StartTime only when watching Replay
         {
@@ -201,6 +202,8 @@ public:
 
     void OnBattlegroundEnd(Battleground* bg, TeamId winnerTeamId) override
     {
+        //if (!bg->isArena() || !bg->IsRated()) return;
+
         uint32 replayId = bg->GetReplayID();
 
         // save replay when a bg ends
@@ -270,7 +273,6 @@ public:
 
     ReplayGossip() : CreatureScript("ReplayGossip") { }
 
-    
     bool OnGossipHello(Player* player, Creature* creature) override
     {
         AddGossipItemFor(player, GOSSIP_ICON_BATTLE, "Replay 2v2 Matches", GOSSIP_SENDER_MAIN, 1);
@@ -282,7 +284,7 @@ public:
         SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
         return true;
     }
-
+    
     bool OnGossipSelect(Player* player, Creature* creature, uint32 sender, uint32 action) override
     {
         player->PlayerTalkClass->ClearMenus();
@@ -628,6 +630,10 @@ private:
         sBattlegroundMgr->BuildBattlegroundStatusPacket(&data, bg, queueSlot, STATUS_IN_PROGRESS, 0, bg->GetStartTime(), bg->GetArenaType(), teamId);
         player->GetSession()->SendPacket(&data);
         handler.PSendSysMessage("Replay ID %u begins.", replayId);
+
+        // nao adianta muito, ja que quando da inspect nao da pra ver o time, gemas, enchants etc
+        //player->SetFaction(FACTION_FRIENDLY); // Allow player to inspect opposite faction players - precisa modificar para que, apos acabar o replay/sair do replay, volta o faction original
+
         return true;
     }
 

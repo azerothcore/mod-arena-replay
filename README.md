@@ -1,7 +1,7 @@
 The arena replay module allows you to watch replay of rated arena games (i think it can be modified to Replay BGs and Raid instances aswell).
 
 The module needs these changes to work with Azeroth Core: 
-[https://github.com/laasker/AzerothCore-Arena-Replay/commit/b4218bf4d8458299dc65b4f82b713b8aa46bf6af](https://github.com/laasker/AzerothCore-Arena-Replay/commit/b4218bf4d8458299dc65b4f82b713b8aa46bf6af)
+https://github.com/laasker/AzerothCore-Arena-Replay/commit/b4218bf4d8458299dc65b4f82b713b8aa46bf6af
 
 You can see a little bit of how the module works here: 
 https://www.youtube.com/watch?v=7z0RA6Dsm9s
