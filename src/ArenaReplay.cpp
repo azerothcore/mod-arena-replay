@@ -193,7 +193,6 @@ public:
 
             WorldPacket* myPacket = &match.packets.front().packet;
             Player* replayer = bg->GetPlayers().begin()->second;
-            Opcodes myOpcode = (Opcodes)myPacket->GetOpcode();
             replayer->GetSession()->SendPacket(myPacket);
             match.packets.pop_front();
         }
@@ -284,7 +283,7 @@ public:
         return true;
     }
 
-    bool OnGossipSelect(Player* player, Creature* creature, uint32 sender, uint32 action) override
+    bool OnGossipSelect(Player* player, Creature* creature, uint32 /* sender */, uint32 action) override
     {
         player->PlayerTalkClass->ClearMenus();
         switch (action)
