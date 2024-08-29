@@ -111,14 +111,9 @@ public:
         if (replayId > 0)
             return true;
 
-        // ignore Skirmish arena and BGs
-        // BGs Replays doesnt load, i played a Eye of the Storm and on the replay it was trying to load different BGs (AV,WSG etc) and ending instant after load.
-        if (!bg->isRated())
-            return true;
-
         // ignore packets until arena started
         if (bg->GetStatus() != BattlegroundStatus::STATUS_IN_PROGRESS)
-            return true; 
+            return true;
 
         // record packets from 1 player of each team
         // iterate just in case a player leaves and used as reference
@@ -195,7 +190,11 @@ public:
         {
             if (bg->GetPlayers().empty())
                 break;
-            bg->GetPlayers().begin()->second->GetSession()->SendPacket(&match.packets.front().packet);
+
+            WorldPacket* myPacket = &match.packets.front().packet;
+            Player* replayer = bg->GetPlayers().begin()->second;
+            Opcodes myOpcode = (Opcodes)myPacket->GetOpcode();
+            replayer->GetSession()->SendPacket(myPacket);
             match.packets.pop_front();
         }
     }
@@ -250,7 +249,7 @@ public:
 
         records.erase(it);
 
-        
+
         uint32 replayfightid = 0;
         QueryResult qResult = CharacterDatabase.Query("SELECT MAX(`id`) AS max_id FROM `character_arena_replays`");
         if (qResult)
@@ -279,51 +278,43 @@ public:
         AddGossipItemFor(player, GOSSIP_ICON_BATTLE, "Replay 2v2 Matches", GOSSIP_SENDER_MAIN, 1);
         AddGossipItemFor(player, GOSSIP_ICON_BATTLE, "Replay 3v3 Matches", GOSSIP_SENDER_MAIN, 2);
         AddGossipItemFor(player, GOSSIP_ICON_BATTLE, "Replay 5v5 Matches", GOSSIP_SENDER_MAIN, 3);
-        AddGossipItemFor(player, GOSSIP_ICON_BATTLE, "Replay 3v3 Solo Matches", GOSSIP_SENDER_MAIN, 6);
         AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Replay a Match ID", GOSSIP_SENDER_MAIN, 0, "Enter the Match ID", 0, true);
         AddGossipItemFor(player, GOSSIP_ICON_BATTLE, "Favorite Matches", GOSSIP_SENDER_MAIN, 4);
         SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
         return true;
     }
-    
-    bool OnGossipSelect(Player* player, Creature* creature, uint32 /* sender */, uint32 action) override
+
+    bool OnGossipSelect(Player* player, Creature* creature, uint32 sender, uint32 action) override
     {
         player->PlayerTalkClass->ClearMenus();
         switch (action)
         {
-            case 1: // Replay 2v2 Matches
-                player->PlayerTalkClass->SendCloseGossip();
-                ShowLastReplays2v2(player, creature);
-                break;
-            case 2: // Replay 3v3 Matches
-                player->PlayerTalkClass->SendCloseGossip();
-                ShowLastReplays3v3(player, creature);
-                break;
-            case 3: // Replay 5v5 Matches
-                player->PlayerTalkClass->SendCloseGossip();
-                ShowLastReplays5v5(player, creature);
-                break;
-            case 6: // Replay 3v3 Solo Matches
-                player->PlayerTalkClass->SendCloseGossip();
-                ShowLastReplays3v3solo(player, creature);
-                break;
-            case 4: // Saved Replays
-                player->PlayerTalkClass->SendCloseGossip();
-                ShowSavedReplays(player, creature);
-                break;
-            case GOSSIP_ACTION_INFO_DEF: // "Back"
-                OnGossipHello(player, creature);
-                break;
+        case 1: // Replay 2v2 Matches
+            player->PlayerTalkClass->SendCloseGossip();
+            ShowLastReplays2v2(player, creature);
+            break;
+        case 2: // Replay 3v3 Matches
+            player->PlayerTalkClass->SendCloseGossip();
+            ShowLastReplays3v3(player, creature);
+            break;
+        case 3: // Replay 5v5 Matches
+            player->PlayerTalkClass->SendCloseGossip();
+            ShowLastReplays5v5(player, creature);
+            break;
+        case 4: // Saved Replays
+            player->PlayerTalkClass->SendCloseGossip();
+            ShowSavedReplays(player, creature);
+            break;
+        case GOSSIP_ACTION_INFO_DEF: // "Back"
+            OnGossipHello(player, creature);
+            break;
 
-            default:
-                if (action >= GOSSIP_ACTION_INFO_DEF + 10) // Replay selected arenas (intid >= 10)
-                {
-                    return replayArenaMatch(player, action - (GOSSIP_ACTION_INFO_DEF + 10));
-                    ChatHandler(player->GetSession()).PSendSysMessage("teste: %u", GOSSIP_ACTION_INFO_DEF);
-                    break;
-                }
+        default:
+            if (action >= GOSSIP_ACTION_INFO_DEF + 10) // Replay selected arenas (intid >= 10)
+            {
+                return replayArenaMatch(player, action - (GOSSIP_ACTION_INFO_DEF + 10));
+            }
         }
-
         return true;
     }
 
@@ -405,31 +396,6 @@ private:
         SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
     }
 
-    void ShowSavedReplaysPage2(Player* player, Creature* creature)
-    {
-        QueryResult result = CharacterDatabase.Query("SELECT replay_id FROM character_saved_replays WHERE character_id = " + std::to_string(player->GetGUID().GetCounter()) + " ORDER BY id DESC LIMIT 30, 30");
-        if (!result)
-        {
-            AddGossipItemFor(player, GOSSIP_ICON_TAXI, "No saved replays found.", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF);
-        }
-        else
-        {
-            const uint32 actionOffset = GOSSIP_ACTION_INFO_DEF + 10;
-            do
-            {
-                Field* fields = result->Fetch();
-                if (!fields)
-                    break;
-
-                uint32 matchId = fields[0].Get<uint32>();
-                AddGossipItemFor(player, GOSSIP_ICON_BATTLE, "Replay match " + std::to_string(matchId), GOSSIP_SENDER_MAIN, actionOffset + matchId);
-            } while (result->NextRow());
-        }
-
-        AddGossipItemFor(player, GOSSIP_ICON_TAXI, "Previous Page", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF);
-        SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
-    }
-
     void ShowLastReplays2v2(Player* player, Creature* creature)
     {
         auto matchIds = loadLast10Replays2v2();
@@ -479,26 +445,6 @@ private:
         if (matchIds.empty())
         {
             AddGossipItemFor(player, GOSSIP_ICON_TAXI, "No replays found for 5v5.", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF);
-        }
-        else
-        {
-            for (uint32 matchId : matchIds)
-            {
-                AddGossipItemFor(player, GOSSIP_ICON_BATTLE, "Replay match " + std::to_string(matchId), GOSSIP_SENDER_MAIN, actionOffset + matchId);
-            }
-        }
-        AddGossipItemFor(player, GOSSIP_ICON_TAXI, "Back", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF);
-        SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
-    }
-    void ShowLastReplays3v3solo(Player* player, Creature* creature)
-    {
-        auto matchIds = loadLast10Replays3v3solo();
-
-        const uint32 actionOffset = GOSSIP_ACTION_INFO_DEF + 10;
-
-        if (matchIds.empty())
-        {
-            AddGossipItemFor(player, GOSSIP_ICON_TAXI, "No replays found for 3v3 solo.", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF);
         }
         else
         {
@@ -586,10 +532,10 @@ private:
 
     void BookmarkMatch(uint64 playerGuid, uint32 code)
     {
-        QueryResult result = CharacterDatabase.Query("SELECT id FROM character_arena_replays WHERE id = " + std::to_string(code));
-        if (result)
+        QueryResult result = CharacterDatabase.Query("SELECT id FROM character_saved_replays WHERE character_id = " + std::to_string(playerGuid) + " and replay_id = " + std::to_string(code));
+        if (!result)
         {
-            std::string query = "INSERT INTO character_saved_replays (character_id, replay_id) VALUES (" + std::to_string(playerGuid) + ", " + std::to_string(code) + ")";
+            std::string query = "INSERT INTO character_saved_replays (" + std::to_string(playerGuid) + ", " + std::to_string(code) + ")";
             CharacterDatabase.Execute(query.c_str());
         }
     }
