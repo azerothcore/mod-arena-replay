@@ -2,6 +2,8 @@
 // Created by romain-p on 17/10/2021.
 //
 #include "ArenaReplay_loader.h"
+#include "ArenaReplayDatabaseConnection.h"
+#include "CharacterDatabase.h"
 #include "Player.h"
 #include "Opcodes.h"
 #include "Battleground.h"
@@ -10,8 +12,6 @@
 #include "ScriptedGossip.h"
 #include "Chat.h"
 #include <unordered_map>
-
-
 
 std::vector<Opcodes> watchList =
 {
@@ -156,7 +156,7 @@ class ArenaReplayBGScript : public BGScript
 public:
     ArenaReplayBGScript() : BGScript("ArenaReplayBGScript") {}
 
-    void OnBattlegroundUpdate(Battleground* bg, uint32 diff) override
+    void OnBattlegroundUpdate(Battleground* bg, uint32 /* diff */) override
     {
         uint32 replayId = bg->GetReplayID();
         if (replayId == 0)
@@ -200,7 +200,7 @@ public:
         }
     }
 
-    void OnBattlegroundEnd(Battleground* bg, TeamId winnerTeamId) override
+    void OnBattlegroundEnd(Battleground* bg, TeamId /* winnerTeamId */) override
     {
         //if (!bg->isArena() || !bg->IsRated()) return;
 
@@ -222,7 +222,7 @@ public:
         MatchRecord& match = it->second;
 
         /** serialize arena replay data **/
-        ByteBuffer buffer;
+        ArenaReplayByteBuffer buffer;
         uint32 headerSize;
         uint32 timestamp;
         for (auto it : match.packets)
@@ -239,6 +239,7 @@ public:
         /********************************/
 
 
+        // PreparedStatement<ArenaReplayDatabaseConnection>* stmt = ArenaReplayDatabase.GetPreparedStatement(CHAR_INS_ARENA_REPLAYS);
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_ARENA_REPLAYS);
         stmt->SetData<uint32>(0, uint32(match.arenaTypeId));
         stmt->SetData<uint32>(1, uint32(match.typeId));
@@ -285,7 +286,7 @@ public:
         return true;
     }
     
-    bool OnGossipSelect(Player* player, Creature* creature, uint32 sender, uint32 action) override
+    bool OnGossipSelect(Player* player, Creature* creature, uint32 /* sender */, uint32 action) override
     {
         player->PlayerTalkClass->ClearMenus();
         switch (action)
@@ -326,7 +327,7 @@ public:
         return true;
     }
 
-    bool OnGossipSelectCode(Player* player, Creature* creature, uint32 sender, uint32 action, const char* code) override
+    bool OnGossipSelectCode(Player* player, Creature* /* creature */, uint32 /* sender */, uint32 action, const char* code) override
     {
         if (action == 0) // "Replay a Match ID"
         {
@@ -663,7 +664,6 @@ private:
     {
         record.arenaTypeId = uint8(fields[1].Get<uint32>());
         record.typeId = BattlegroundTypeId(fields[2].Get<uint32>());
-        int size = uint32(fields[3].Get<uint32>());
         std::vector<uint8> data = fields[4].Get<Binary>();
         record.mapId = uint32(fields[5].Get<uint32>());
         ByteBuffer buffer;
