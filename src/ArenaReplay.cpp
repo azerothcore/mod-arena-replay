@@ -1,17 +1,18 @@
 //
 // Created by romain-p on 17/10/2021.
 //
-#include "ArenaReplay_loader.h"
 #include "ArenaReplayDatabaseConnection.h"
-#include "CharacterDatabase.h"
-#include "Player.h"
-#include "Opcodes.h"
+#include "ArenaReplay_loader.h"
 #include "Battleground.h"
 #include "BattlegroundMgr.h"
+#include "CharacterDatabase.h"
+#include "Chat.h"
+#include "Opcodes.h"
+#include "Player.h"
 #include "ScriptMgr.h"
 #include "ScriptedGossip.h"
-#include "Chat.h"
 #include <unordered_map>
+#include "Base32.h"
 
 std::vector<Opcodes> watchList =
 {
@@ -89,6 +90,7 @@ struct PacketRecord { uint32 timestamp; WorldPacket packet; };
 struct MatchRecord { BattlegroundTypeId typeId; uint8 arenaTypeId; uint32 mapId; std::deque<PacketRecord> packets; };
 std::unordered_map<uint32, MatchRecord> records;
 std::unordered_map<uint64, MatchRecord> loadedReplays;
+std::unordered_map<uint32, uint32> bgReplayIds;
 
 class ArenaReplayServerScript : public ServerScript
 {
@@ -105,11 +107,11 @@ public:
         if (!bg)
             return true;
 
-        uint32 replayId = bg->GetReplayID();
+        const bool isReplay = bgReplayIds.find(bg->GetInstanceID()) != bgReplayIds.end();
 
         // ignore packet when no bg or casual games
-        if (replayId > 0)
-            return true;
+        if (isReplay)
+          return true;
 
         // ignore packets until arena started
         if (bg->GetStatus() != BattlegroundStatus::STATUS_IN_PROGRESS)
@@ -146,6 +148,18 @@ public:
     }
 };
 
+class ArenaReplayArenaScript : public ArenaScript {
+public:
+  ArenaReplayArenaScript() : ArenaScript("ArenaReplayArenaScript") {}
+
+  bool OnBeforeArenaCheckWinConditions(Battleground *const bg) override {
+    const bool isReplay = bgReplayIds.find(bg->GetInstanceID()) != bgReplayIds.end();
+
+    // if isReplay then return false to exit from check condition
+    return !isReplay;
+  }
+};
+
 class ArenaReplayBGScript : public BGScript
 {
 public:
@@ -153,11 +167,13 @@ public:
 
     void OnBattlegroundUpdate(Battleground* bg, uint32 /* diff */) override
     {
-        uint32 replayId = bg->GetReplayID();
-        if (replayId == 0)
+        const bool isReplay = bgReplayIds.find(bg->GetInstanceID()) != bgReplayIds.end();
+        if (!isReplay)
             return;
 
         //if (!bg->isArena() || !bg->IsRated()) return;
+
+        uint32 replayId = bgReplayIds.at(bg->GetInstanceID());
 
         int32 startDelayTime = bg->GetStartDelayTime();
         if (startDelayTime > 1000) // reduces StartTime only when watching Replay
@@ -198,18 +214,19 @@ public:
         }
     }
 
-    void OnBattlegroundEnd(Battleground* bg, TeamId /* winnerTeamId */) override
-    {
-        //if (!bg->isArena() || !bg->IsRated()) return;
+    void OnBattlegroundEnd(Battleground *bg, TeamId /* winnerTeamId */) override {
+      // if (!bg->isArena() || !bg->IsRated()) return;
 
-        uint32 replayId = bg->GetReplayID();
+      const bool isReplay = bgReplayIds.find(bg->GetInstanceID()) != bgReplayIds.end();
 
-        // save replay when a bg ends
-        if (replayId <= 0)
-        {
-            saveReplay(bg);
-            return;
-        }
+      // save replay when a bg ends
+      if (!isReplay)
+      {
+        saveReplay(bg);
+        return;
+      }
+
+      bgReplayIds.erase(bg->GetInstanceID());
     }
 
     void saveReplay(Battleground* bg)
@@ -236,15 +253,13 @@ public:
         }
         /********************************/
 
-
-        // PreparedStatement<ArenaReplayDatabaseConnection>* stmt = ArenaReplayDatabase.GetPreparedStatement(CHAR_INS_ARENA_REPLAYS);
-        CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_ARENA_REPLAYS);
-        stmt->SetData<uint32>(0, uint32(match.arenaTypeId));
-        stmt->SetData<uint32>(1, uint32(match.typeId));
-        stmt->SetData<uint32>(2, buffer.size());
-        stmt->SetBinary(3, buffer.contentsAsVector());
-        stmt->SetData<uint32>(4, bg->GetMapId());
-        CharacterDatabase.Execute(stmt);
+        CharacterDatabase.Execute("INSERT INTO `character_arena_replays` (`arenaTypeId`, `typeId`, `contentSize`, `contents`, `mapId`) VALUES ({}, {}, {}, \"{}\", {})",
+            uint32(match.arenaTypeId),
+            uint32(match.typeId),
+            buffer.size(),
+            Acore::Encoding::Base32::Encode(buffer.contentsAsVector()),
+            bg->GetMapId()
+        );
 
         records.erase(it);
 
@@ -383,7 +398,6 @@ private:
 
                 uint32 matchId = fields[0].Get<uint32>();
                 AddGossipItemFor(player, GOSSIP_ICON_BATTLE, "Replay match " + std::to_string(matchId), GOSSIP_SENDER_MAIN, actionOffset + matchId);
-
             } while (result->NextRow());
         }
 
@@ -544,10 +558,7 @@ private:
         auto handler = ChatHandler(player->GetSession());
 
         if (!loadReplayDataForPlayer(player, replayId))
-        {
-            CloseGossipMenuFor(player);
             return false;
-        }
 
         MatchRecord record = loadedReplays[player->GetGUID().GetCounter()];
 
@@ -559,7 +570,7 @@ private:
             return false;
         }
 
-        bg->SetReplayID(player->GetGUID().GetCounter());
+        bgReplayIds[bg->GetInstanceID()] = player->GetGUID().GetCounter();
         player->SetPendingSpectatorForBG(bg->GetInstanceID());
         bg->StartBattleground();
 
@@ -641,5 +652,6 @@ void AddArenaReplayScripts()
 {
     new ArenaReplayServerScript();
     new ArenaReplayBGScript();
+    new ArenaReplayArenaScript();
     new ReplayGossip();
 }
