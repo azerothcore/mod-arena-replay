@@ -620,7 +620,7 @@ private:
     {
         record.arenaTypeId = uint8(fields[1].Get<uint32>());
         record.typeId = BattlegroundTypeId(fields[2].Get<uint32>());
-        std::vector<uint8> data = fields[4].Get<Binary>();
+        std::vector<uint8> data = *Acore::Encoding::Base32::Decode(fields[4].Get<std::string>());
         record.mapId = uint32(fields[5].Get<uint32>());
         ByteBuffer buffer;
         buffer.append(&data[0], data.size());
