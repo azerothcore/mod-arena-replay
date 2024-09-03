@@ -276,7 +276,7 @@ public:
         for (const auto& playerPair : bg->GetPlayers())
         {
             Player* player = playerPair.second;
-            ChatHandler(player->GetSession()).PSendSysMessage("Replay saved. Match ID: %u", replayfightid + 1);
+            ChatHandler(player->GetSession()).PSendSysMessage("Replay saved. Match ID: {}", replayfightid + 1);
         }
     }
 };
@@ -362,7 +362,6 @@ public:
             {
                 uint32 NumberTyped = std::stoi(code);
                 BookmarkMatch(player->GetGUID().GetCounter(), NumberTyped);
-                //ChatHandler(player->GetSession()).PSendSysMessage("Replay ID %u saved.", NumberTyped);
                 return true;
             }
             catch (...)
@@ -545,11 +544,24 @@ private:
 
     void BookmarkMatch(uint64 playerGuid, uint32 code)
     {
-        QueryResult result = CharacterDatabase.Query("SELECT id FROM character_saved_replays WHERE character_id = " + std::to_string(playerGuid) + " and replay_id = " + std::to_string(code));
-        if (!result)
+        // Need to check if the match exists in character_arena_replays, then insert in character_saved_replays
+        QueryResult result = CharacterDatabase.Query("SELECT id FROM character_arena_replays WHERE id = " + std::to_string(code));
+        if (result)
         {
-            std::string query = "INSERT INTO character_saved_replays (" + std::to_string(playerGuid) + ", " + std::to_string(code) + ")";
+            std::string query = "INSERT INTO character_saved_replays (character_id, replay_id) VALUES (" + std::to_string(playerGuid) + ", " + std::to_string(code) + ")";
             CharacterDatabase.Execute(query.c_str());
+
+            if (Player* player = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(playerGuid)))
+            {
+                ChatHandler(player->GetSession()).PSendSysMessage("Replay match ID {} saved.", code);
+            }
+        }
+        else
+        {
+            if (Player* player = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(playerGuid)))
+            {
+                ChatHandler(player->GetSession()).PSendSysMessage("Replay match ID {} does not exist.", code);
+            }
         }
     }
 
@@ -586,7 +598,7 @@ private:
         sBattlegroundMgr->SendToBattleground(player, bg->GetInstanceID(), bgTypeId);
         sBattlegroundMgr->BuildBattlegroundStatusPacket(&data, bg, queueSlot, STATUS_IN_PROGRESS, 0, bg->GetStartTime(), bg->GetArenaType(), teamId);
         player->GetSession()->SendPacket(&data);
-        handler.PSendSysMessage("Replay ID %u begins.", replayId);
+        handler.PSendSysMessage("Replay ID {} begins.", replayId);
 
         // nao adianta muito, ja que quando da inspect nao da pra ver o time, gemas, enchants etc
         //player->SetFaction(FACTION_FRIENDLY); // Allow player to inspect opposite faction players - precisa modificar para que, apos acabar o replay/sair do replay, volta o faction original
