@@ -1,0 +1,22 @@
+#
+# Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license: https://github.com/azerothcore/azerothcore-wotlk/blob/master/LICENSE-AGPL3
+#
+
+[worldserver]
+
+########################################
+# ArenaReplay
+########################################
+#
+#    ArenaReplay.Enable
+#        Description: Enable module
+#        Default:     1 - Enabled
+#                     0 - Disabled
+#
+#    ArenaReplay.DeleteReplaysAfterDays
+#        Description: delete replays after specific days
+#        Default:     30 - Enabled
+#                     0 - Disabled, don't delete
+
+ArenaReplay.Enable = 1
+ArenaReplay.DeleteReplaysAfterDays = 30
