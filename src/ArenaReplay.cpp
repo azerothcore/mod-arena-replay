@@ -173,8 +173,6 @@ public:
       std::string teamLoserName;
       std::string winnerGuids;
       std::string loserGuids;
-      std::string winnerClassIds;
-      std::string loserClassIds;
 
       for (const auto& playerPair : bg->GetPlayers())
       {
@@ -185,7 +183,6 @@ public:
           if (!player)
               continue;
 
-          std::string playerClassId = std::to_string(player->getClass());
           std::string playerGuid = std::to_string(player->GetGUID().GetRawValue());
           TeamId bgTeamId = player->GetBgTeamId();
           uint32 bgInstanceId = bg->GetInstanceID();
@@ -214,13 +211,10 @@ public:
             return;
 
         if (!bg->isArena() && !sConfigMgr->GetOption<bool>("ArenaReplay.SaveBattlegrounds", true))
-        {
             return;
-        }
+
         if (!bg->isRated() && !sConfigMgr->GetOption<bool>("ArenaReplay.SaveUnratedArenas", true))
-        {
             return;
-        }
 
         uint32 replayId = bgReplayIds.at(bg->GetInstanceID());
 
@@ -238,6 +232,7 @@ public:
         auto it = loadedReplays.find(replayId);
         if (it == loadedReplays.end())
             return;
+
         MatchRecord& match = it->second;
 
         // if replay ends or spectator left > free arena replay data and/or kick player
@@ -247,6 +242,7 @@ public:
 
             if (!bg->GetPlayers().empty())
                 bg->GetPlayers().begin()->second->LeaveBattleground(bg);
+
             return;
         }
 
@@ -266,14 +262,10 @@ public:
     void OnBattlegroundEnd(Battleground *bg, TeamId winnerTeamId ) override {
 
         if (!bg->isArena() && !sConfigMgr->GetOption<bool>("ArenaReplay.SaveBattlegrounds", true))
-        {
             return;
-        }
 
         if (!bg->isRated() && !sConfigMgr->GetOption<bool>("ArenaReplay.SaveUnratedArenas", true))
-        {
             return;
-        }
 
         const bool isReplay = bgReplayIds.find(bg->GetInstanceID()) != bgReplayIds.end();
 
@@ -293,9 +285,11 @@ public:
 
     void saveReplay(Battleground* bg, TeamId winnerTeamId)
     {
-        //retrieve replay data
+        // retrieve replay data
         auto it = records.find(bg->GetInstanceID());
-        if (it == records.end()) return;
+        if (it == records.end())
+            return;
+
         MatchRecord& match = it->second;
 
         /** serialize arena replay data **/
@@ -307,8 +301,8 @@ public:
             headerSize = it.packet.size(); //header 4Bytes packet size
             timestamp = it.timestamp;
 
-            buffer << headerSize; //4 bytes
-            buffer << timestamp; //4 bytes
+            buffer << headerSize; // 4 bytes
+            buffer << timestamp; // 4 bytes
             buffer << it.packet.GetOpcode(); // 2 bytes
             if (headerSize > 0)
                 buffer.append(it.packet.contents(), it.packet.size()); // headerSize bytes
@@ -322,8 +316,6 @@ public:
         std::string teamLoserName;
         std::string winnerGuids;
         std::string loserGuids;
-        std::string winnerClassIds;
-        std::string loserClassIds;
 
         for (const auto& playerPair : bg->GetPlayers())
         {
@@ -331,7 +323,6 @@ public:
             if (!player)
                 continue;
 
-            std::string playerClassId = std::to_string(player->getClass());
             std::string playerGuid = std::to_string(player->GetGUID().GetRawValue());
             TeamId bgTeamId = player->GetBgTeamId();
             ArenaTeam* team = sArenaTeamMgr->GetArenaTeamById(bg->GetArenaTeamIdForTeam(bgTeamId));
@@ -341,73 +332,21 @@ public:
 
             if (bgTeamId == winnerTeamId)
             {
-                if (!winnerClassIds.empty())
-                    winnerClassIds += ", ";
-                winnerClassIds += playerClassId;
-
                 if (!winnerGuids.empty())
                     winnerGuids += ", ";
                 winnerGuids += playerGuid;
 
-                if (bg->isRated() && team)
-                {
-                    if (team->GetId() < 0xFFF00000)
-                    {
-                        teamWinnerName = team->GetName();
-                        teamWinnerRating = team->GetRating();
-                        teamWinnerMMR = teamMMR;
-                    }
-                    // 3v3 Solo Queue match (temporary team that merge players in 1 team)
-                    else if (team->GetId() >= 0xFFF00000)
-                    {
-                        teamWinnerName = "3v3 Solo Queue";
-                        teamWinnerRating = team->GetRating();
-                        teamWinnerMMR = teamMMR;
-                    }
-                }
-                if (bg->isArena() && !bg->isRated())
-                {
-                    teamWinnerName = "Skirmish Arena";
-                }
-                else if (!bg->isArena())
-                {
-                    teamWinnerName = "Battleground";
-                }
+                getTeamInformation(bg, team, playerGuid, teamWinnerName, teamWinnerRating);
+                teamWinnerMMR = teamMMR;
             }
             else // Loss
             {
-                if (!loserClassIds.empty())
-                    loserClassIds += ", ";
-                loserClassIds += playerClassId;
-
                 if (!loserGuids.empty())
                     loserGuids += ", ";
                 loserGuids += playerGuid;
 
-                if (bg->isRated() && team)
-                {
-                    if (team->GetId() < 0xFFF00000)
-                    {
-                        teamLoserName = team->GetName();
-                        teamLoserRating = team->GetRating();
-                        teamLoserMMR = teamMMR;
-                    }
-                    // 3v3 Solo Queue match
-                    else if (team->GetId() >= 0xFFF00000)
-                    {
-                        teamLoserName = "3v3 Solo Queue";
-                        teamLoserRating = team->GetRating();
-                        teamLoserMMR = teamMMR;
-                    }
-                }
-                if (bg->isArena() && !bg->isRated())
-                {
-                    teamLoserName = "Skirmish Arena";
-                }
-                else if (!bg->isArena())
-                {
-                    teamLoserName = "Battleground";
-                }
+                getTeamInformation(bg, team, playerGuid, teamLoserName, teamLoserRating);
+                teamLoserMMR = teamMMR;
             }
 
             // Send replay ID to player after a game end
@@ -435,13 +374,13 @@ public:
         teamWinnerMMR=0;
 
         CharacterDatabase.Execute("INSERT INTO `character_arena_replays` "
-            //   1             2            3            4          5          6                  7                    8                 9
-            "(`arenaTypeId`, `typeId`, `contentSize`, `contents`, `mapId`, `winnerTeamName`, `winnerTeamRating`, `winnerTeamMMR`, `winnerClassIds`, "
-            //    10                11                12              13                 14                  15
-            "`loserTeamName`, `loserTeamRating`, `loserTeamMMR`, `loserClassIds`, `winnerPlayerGuids`, `loserPlayerGuids`) "
+            //   1             2            3            4          5          6                  7                    8
+            "(`arenaTypeId`, `typeId`, `contentSize`, `contents`, `mapId`, `winnerTeamName`, `winnerTeamRating`, `winnerTeamMMR`, "
+            //    9                10                 11                 12                 13
+            "`loserTeamName`, `loserTeamRating`, `loserTeamMMR`, `winnerPlayerGuids`, `loserPlayerGuids`) "
 
-            "VALUES ({}, {}, {}, \"{}\", {}, '{}', {}, {}, \"{}\", '{}', {}, {}, \"{}\", \"{}\", \"{}\")",
-            //       1   2    3     4    5    6    7   8     9      10   11  12    13     14       15
+            "VALUES ({}, {}, {}, \"{}\", {}, '{}', {}, {}, '{}', {}, {}, \"{}\", \"{}\")",
+            //       1   2    3     4    5    6    7   8    9    10  11    12      13
 
             uint32(match.arenaTypeId), // 1
             uint32(match.typeId),      // 2
@@ -451,16 +390,46 @@ public:
             teamWinnerName,    // 6
             teamWinnerRating,  // 7
             teamWinnerMMR,     // 8
-            winnerClassIds,    // 9
-            teamLoserName,     // 10
-            teamLoserRating,   // 11
-            teamLoserMMR,      // 12
-            loserClassIds,     // 13
-            winnerGuids,       // 14
-            loserGuids         // 15
+            teamLoserName,     // 9
+            teamLoserRating,   // 10
+            teamLoserMMR,      // 11
+            winnerGuids,       // 12
+            loserGuids         // 13
         );
 
         records.erase(it);
+    }
+
+private:
+    void getTeamInformation(Battleground *bg, ArenaTeam* team, std::string playerGuid, std::string &teamName, uint32 &teamRating) {
+        if (bg->isRated() && team)
+        {
+            if (team->GetId() < 0xFFF00000)
+            {
+                teamName = team->GetName();
+                teamRating = team->GetRating();
+            }
+            // 3v3 Solo Queue match (temporary team that merge players in 1 team)
+            else if (team->GetId() >= 0xFFF00000)
+            {
+                uint64 _guid = std::stoi(playerGuid);
+                CharacterCacheEntry const* playerData = sCharacterCache->GetCharacterCacheByGuid(ObjectGuid(_guid));
+                if (playerData)
+                    teamName += playerData->Name + " ";
+
+                teamRating = team->GetRating();
+            }
+        }
+
+        if (bg->isArena() && !bg->isRated())
+        {
+            uint64 _guid = std::stoi(playerGuid);
+            CharacterCacheEntry const* playerData = sCharacterCache->GetCharacterCacheByGuid(ObjectGuid(_guid));
+            if (playerData)
+                teamName += playerData->Name + " ";
+        }
+        else if (!bg->isArena())
+            teamName = "Battleground";
     }
 };
 
@@ -703,52 +672,100 @@ private:
 
     std::string GetClassIconById(uint8 id)
     {
-        std::string sClass = "";
         switch (id)
         {
             case CLASS_WARRIOR:
-                sClass = "|TInterface\\icons\\inv_sword_27";
-                break;
+                return "|TInterface\\icons\\inv_sword_27";
             case CLASS_PALADIN:
-                sClass = "|TInterface\\icons\\inv_hammer_01";
-                break;
+                return "|TInterface\\icons\\inv_hammer_01";
             case CLASS_HUNTER:
-                sClass = "|TInterface\\icons\\inv_weapon_bow_07";
-                break;
+                return "|TInterface\\icons\\inv_weapon_bow_07";
             case CLASS_ROGUE:
-                sClass = "|TInterface\\icons\\inv_throwingknife_04";
-                break;
+                return "|TInterface\\icons\\inv_throwingknife_04";
             case CLASS_PRIEST:
-                sClass = "|TInterface\\icons\\inv_staff_30";
-                break;
+                return "|TInterface\\icons\\inv_staff_30";
             case CLASS_DEATH_KNIGHT:
-                sClass = "|TInterface\\icons\\spell_deathknight_classicon";
-                break;
+                return "|TInterface\\icons\\spell_deathknight_classicon";
             case CLASS_SHAMAN:
-                sClass = "TInterface\\icons\\inv_jewelry_talisman_04";
-                break;
+                return "TInterface\\icons\\inv_jewelry_talisman_04";
             case CLASS_MAGE:
-                sClass = "|TInterface\\icons\\inv_staff_13";
-                break;
+                return "|TInterface\\icons\\inv_staff_13";
             case CLASS_WARLOCK:
-                sClass = "|TInterface\\icons\\spell_nature_drowsy";
-                break;
+                return "|TInterface\\icons\\spell_nature_drowsy";
             case CLASS_DRUID:
-                sClass = "|TInterface\\icons\\inv_misc_monsterclaw_04";
-                break;
+                return "|TInterface\\icons\\inv_misc_monsterclaw_04";
+            default:
+                return "";
         }
-        return sClass;
+    }
+
+    std::string GetRaceIconById(uint8 id, uint8 gender) {
+        const std::string gender_icon = gender == GENDER_MALE ? "male" : "female";
+        switch (id) {
+            case RACE_HUMAN:
+                return "|TInterface/ICONS/achievement_character_human_" + gender_icon;
+            case RACE_ORC:
+                return "|TInterface/ICONS/achievement_character_orc_" + gender_icon;
+            case RACE_DWARF:
+                return "|TInterface/ICONS/achievement_character_dwarf_" + gender_icon;
+            case RACE_NIGHTELF:
+                return "|TInterface/ICONS/achievement_character_nightelf_" + gender_icon;
+            case RACE_UNDEAD_PLAYER:
+                return "|TInterface/ICONS/achievement_character_undead_" + gender_icon;
+            case RACE_TAUREN:
+                return "|TInterface/ICONS/achievement_character_tauren_" + gender_icon;
+            case RACE_GNOME:
+                return "|TInterface/ICONS/achievement_character_gnome_" + gender_icon;
+            case RACE_TROLL:
+                return "|TInterface/ICONS/achievement_character_troll_" + gender_icon;
+            case RACE_BLOODELF:
+                return "|TInterface/ICONS/achievement_character_bloodelf_" + gender_icon;
+            case RACE_DRAENEI:
+                return "|TInterface/ICONS/achievement_character_draenei_" + gender_icon;
+            default:
+                return "";
+        }
+    }
+
+    std::string GetPlayersIconTexts(std::string playerGuids) {
+        std::string iconsTextTeam;
+        std::vector<std::string> playerGuidsTeam1;
+
+        std::stringstream ssPlayerGuids(playerGuids);
+        std::string item;
+
+        while (std::getline(ssPlayerGuids, item, ','))
+            playerGuidsTeam1.push_back(item);
+
+        for (const std::string& guid : playerGuidsTeam1)
+        {
+            uint64 _guid = std::stoi(guid);
+            CharacterCacheEntry const* playerData = sCharacterCache->GetCharacterCacheByGuid(ObjectGuid(_guid));
+            if (playerData)
+            {
+                iconsTextTeam += GetClassIconById(playerData->Class) + ":14:14:05:00|t|r";
+                iconsTextTeam += GetRaceIconById(playerData->Race, playerData->Sex) + ":14:14:05:00|t|r ";
+            }
+        }
+
+        if (!iconsTextTeam.empty() && iconsTextTeam.back() == '\n')
+            iconsTextTeam.pop_back();
+
+        return iconsTextTeam;
     }
 
     struct ReplayInfo
     {
         uint32 matchId;
+
+        std::string winnerPlayerGuids;
         std::string winnerTeamName;
         uint32 winnerTeamRating;
-        std::string winnerClasses;
+
+        std::string loserPlayerGuids;
         std::string loserTeamName;
         uint32 loserTeamRating;
-        std::string loserClasses;
+
         //uint32 winnerMMR;
         //uint32 loserMMR;
     };
@@ -766,45 +783,18 @@ private:
             AddGossipItemFor(player, GOSSIP_ICON_TRAINER, "[Replay ID] (Team Rating) 'Team Name'\n----------------------------------------------", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF); // Back to Main Menu
             for (const auto& info : matchInfos)
             {
-                std::string classIconsTextTeam1;
-                std::string classIconsTextTeam2;
-                std::vector<std::string> classIdsTeam1;
-                std::stringstream ssWinnerClasses(info.winnerClasses);
-                std::string item;
-                while (std::getline(ssWinnerClasses, item, ','))
-                {
-                    classIdsTeam1.push_back(item);
-                }
-                std::vector<std::string> classIdsTeam2;
-                std::stringstream ssLoserClasses(info.loserClasses);
-                while (std::getline(ssLoserClasses, item, ','))
-                {
-                    classIdsTeam2.push_back(item);
-                }
+                std::string iconsTextTeam1 = GetPlayersIconTexts(info.winnerPlayerGuids);
+                std::string iconsTextTeam2 = GetPlayersIconTexts(info.loserPlayerGuids);
 
-                for (const std::string& classId : classIdsTeam1)
-                {
-                    uint32 id = std::stoi(classId);
-                    classIconsTextTeam1 += GetClassIconById(id) + ":14:14:05:00|t|r";
-                }
-                for (const std::string& classId : classIdsTeam2)
-                {
-                    uint32 id = std::stoi(classId);
-                    classIconsTextTeam2 += GetClassIconById(id) + ":14:14:05:00|t|r";
-                }
-                if (!classIconsTextTeam1.empty() && classIconsTextTeam1.back() == '\n')
-                    classIconsTextTeam1.pop_back();
-                if (!classIconsTextTeam2.empty() && classIconsTextTeam2.back() == '\n')
-                    classIconsTextTeam2.pop_back();
                 std::string coloredWinnerTeamName = "|cff00ff00" + info.winnerTeamName + "|r";
                 std::string LoserTeamName = info.loserTeamName;
 
                 std::string gossipText = ("[" + std::to_string(info.matchId) + "] (" +
                     std::to_string(info.winnerTeamRating) + ")" +
-                    classIconsTextTeam1 + "" +
+                    iconsTextTeam1 + "" +
                     " '" + coloredWinnerTeamName + "'" +
                     "\n vs   (" + std::to_string(info.loserTeamRating) + ")" +
-                    classIconsTextTeam2 + "" +
+                    iconsTextTeam2 + "" +
                     " '" + LoserTeamName + "'");
 
                 const uint32 actionOffset = GOSSIP_ACTION_INFO_DEF + 30;
@@ -815,10 +805,11 @@ private:
         AddGossipItemFor(player, GOSSIP_ICON_TAXI, "Back", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF);
         SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
     }
+
     std::vector<ReplayInfo> loadReplaysAllTimeByArenaType(uint8 arenaTypeId)
     {
         std::vector<ReplayInfo> records;
-        QueryResult result = CharacterDatabase.Query("SELECT id, winnerTeamName, winnerTeamRating, winnerClassIds, loserTeamName, loserTeamRating, loserClassIds FROM character_arena_replays WHERE arenaTypeId = {} ORDER BY winnerTeamRating DESC LIMIT 20", arenaTypeId);
+        QueryResult result = CharacterDatabase.Query("SELECT id, winnerTeamName, winnerTeamRating, winnerPlayerGuids, loserTeamName, loserTeamRating, loserPlayerGuids FROM character_arena_replays WHERE arenaTypeId = {} ORDER BY winnerTeamRating DESC LIMIT 20", arenaTypeId);
 
         if (!result)
             return records;
@@ -833,10 +824,10 @@ private:
             info.matchId = fields[0].Get<uint32>();
             info.winnerTeamName = fields[1].Get<std::string>();
             info.winnerTeamRating = fields[2].Get<uint32>();
-            info.winnerClasses = fields[3].Get<std::string>();
+            info.winnerPlayerGuids = fields[3].Get<std::string>();
             info.loserTeamName = fields[4].Get<std::string>();
             info.loserTeamRating = fields[5].Get<uint32>();
-            info.loserClasses = fields[6].Get<std::string>();
+            info.loserPlayerGuids = fields[6].Get<std::string>();
 
             records.push_back(info);
         } while (result->NextRow());
@@ -857,45 +848,18 @@ private:
             AddGossipItemFor(player, GOSSIP_ICON_TRAINER, "[Replay ID] (Team Rating) 'Team Name'\n----------------------------------------------", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF); // Back to Main Menu
             for (const auto& info : matchInfos)
             {
-                std::string classIconsTextTeam1;
-                std::string classIconsTextTeam2;
-                std::vector<std::string> classIdsTeam1;
-                std::stringstream ssWinnerClasses(info.winnerClasses);
-                std::string item;
-                while (std::getline(ssWinnerClasses, item, ','))
-                {
-                    classIdsTeam1.push_back(item);
-                }
-                std::vector<std::string> classIdsTeam2;
-                std::stringstream ssLoserClasses(info.loserClasses);
-                while (std::getline(ssLoserClasses, item, ','))
-                {
-                    classIdsTeam2.push_back(item);
-                }
+                std::string iconsTextTeam1 = GetPlayersIconTexts(info.winnerPlayerGuids);
+                std::string iconsTextTeam2 = GetPlayersIconTexts(info.loserPlayerGuids);
 
-                for (const std::string& classId : classIdsTeam1)
-                {
-                    uint32 id = std::stoi(classId);
-                    classIconsTextTeam1 += GetClassIconById(id) + ":14:14:05:00|t|r";
-                }
-                for (const std::string& classId : classIdsTeam2)
-                {
-                    uint32 id = std::stoi(classId);
-                    classIconsTextTeam2 += GetClassIconById(id) + ":14:14:05:00|t|r";
-                }
-                if (!classIconsTextTeam1.empty() && classIconsTextTeam1.back() == '\n')
-                    classIconsTextTeam1.pop_back();
-                if (!classIconsTextTeam2.empty() && classIconsTextTeam2.back() == '\n')
-                    classIconsTextTeam2.pop_back();
                 std::string coloredWinnerTeamName = "|cff00ff00" + info.winnerTeamName + "|r";
                 std::string LoserTeamName = info.loserTeamName;
 
                 std::string gossipText = ("[" + std::to_string(info.matchId) + "] (" +
                     std::to_string(info.winnerTeamRating) + ")" +
-                    classIconsTextTeam1 + "" +
+                    iconsTextTeam1 + "" +
                     " '" + coloredWinnerTeamName + "'" +
                     "\n vs   (" + std::to_string(info.loserTeamRating) + ")" +
-                    classIconsTextTeam2 + "" +
+                    iconsTextTeam2 + "" +
                     " '" + LoserTeamName + "'");
 
                 const uint32 actionOffset = GOSSIP_ACTION_INFO_DEF + 30;
@@ -921,7 +885,7 @@ private:
 
 		// Only show games that are 30 days old
         QueryResult result = CharacterDatabase.Query(
-            "SELECT id, winnerTeamName, winnerTeamRating, winnerClassIds, loserTeamName, loserTeamRating, loserClassIds, timestamp "
+            "SELECT id, winnerTeamName, winnerTeamRating, winnerPlayerGuids, loserTeamName, loserTeamRating, loserPlayerGuids, timestamp "
             "FROM character_arena_replays "
             "WHERE arenaTypeId = {} AND timestamp >= '{}' "
             "ORDER BY winnerTeamRating DESC LIMIT 20", arenaTypeId, thirtyDaysAgo.c_str());
@@ -939,10 +903,10 @@ private:
             info.matchId = fields[0].Get<uint32>();
             info.winnerTeamName = fields[1].Get<std::string>();
             info.winnerTeamRating = fields[2].Get<uint32>();
-            info.winnerClasses = fields[3].Get<std::string>();
+            info.winnerPlayerGuids = fields[3].Get<std::string>();
             info.loserTeamName = fields[4].Get<std::string>();
             info.loserTeamRating = fields[5].Get<uint32>();
-            info.loserClasses = fields[6].Get<std::string>();
+            info.loserPlayerGuids = fields[6].Get<std::string>();
 
             records.push_back(info);
         } while (result->NextRow());
@@ -963,45 +927,18 @@ private:
             AddGossipItemFor(player, GOSSIP_ICON_TRAINER, "[Replay ID] (Team Rating) 'Team Name'\n----------------------------------------------", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF); // Back to Main Menu
             for (const auto& info : matchInfos)
             {
-                std::string classIconsTextTeam1;
-                std::string classIconsTextTeam2;
-                std::vector<std::string> classIdsTeam1;
-                std::stringstream ssWinnerClasses(info.winnerClasses);
-                std::string item;
-                while (std::getline(ssWinnerClasses, item, ','))
-                {
-                    classIdsTeam1.push_back(item);
-                }
-                std::vector<std::string> classIdsTeam2;
-                std::stringstream ssLoserClasses(info.loserClasses);
-                while (std::getline(ssLoserClasses, item, ','))
-                {
-                    classIdsTeam2.push_back(item);
-                }
+                std::string iconsTextTeam1 = GetPlayersIconTexts(info.winnerPlayerGuids);
+                std::string iconsTextTeam2 = GetPlayersIconTexts(info.loserPlayerGuids);
 
-                for (const std::string& classId : classIdsTeam1)
-                {
-                    uint32 id = std::stoi(classId);
-                    classIconsTextTeam1 += GetClassIconById(id) + ":14:14:05:00|t|r";
-                }
-                for (const std::string& classId : classIdsTeam2)
-                {
-                    uint32 id = std::stoi(classId);
-                    classIconsTextTeam2 += GetClassIconById(id) + ":14:14:05:00|t|r";
-                }
-                if (!classIconsTextTeam1.empty() && classIconsTextTeam1.back() == '\n')
-                    classIconsTextTeam1.pop_back();
-                if (!classIconsTextTeam2.empty() && classIconsTextTeam2.back() == '\n')
-                    classIconsTextTeam2.pop_back();
                 std::string coloredWinnerTeamName = "|cff00ff00" + info.winnerTeamName + "|r";
                 std::string LoserTeamName = info.loserTeamName;
 
                 std::string gossipText = "[" + std::to_string(info.matchId) + "] (" +
                     std::to_string(info.winnerTeamRating) + ")" +
-                    classIconsTextTeam1 + "" +
+                    iconsTextTeam1 + "" +
                     " '" + coloredWinnerTeamName + "'" +
                     "\n vs   (" + std::to_string(info.loserTeamRating) + ")" +
-                    classIconsTextTeam2 + "" +
+                    iconsTextTeam2 + "" +
                     " '" + LoserTeamName + "'";
 
                 const uint32 actionOffset = GOSSIP_ACTION_INFO_DEF + 30;
@@ -1012,11 +949,12 @@ private:
         AddGossipItemFor(player, GOSSIP_ICON_TAXI, "Back", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF);
         SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
     }
+
     std::vector<ReplayInfo> loadMostWatchedReplays()
     {
         std::vector<ReplayInfo> records;
         QueryResult result = CharacterDatabase.Query(
-            "SELECT id, winnerTeamName, winnerTeamRating, winnerClassIds, loserTeamName, loserTeamRating, loserClassIds "
+            "SELECT id, winnerTeamName, winnerTeamRating, winnerPlayerGuids, loserTeamName, loserTeamRating, loserPlayerGuids "
             "FROM character_arena_replays "
             "ORDER BY timesWatched DESC, winnerTeamRating DESC "
             "LIMIT 28");
@@ -1034,10 +972,10 @@ private:
             info.matchId = fields[0].Get<uint32>();
             info.winnerTeamName = fields[1].Get<std::string>();
             info.winnerTeamRating = fields[2].Get<uint32>();
-            info.winnerClasses = fields[3].Get<std::string>();
+            info.winnerPlayerGuids = fields[3].Get<std::string>();
             info.loserTeamName = fields[4].Get<std::string>();
             info.loserTeamRating = fields[5].Get<uint32>();
-            info.loserClasses = fields[6].Get<std::string>();
+            info.loserPlayerGuids = fields[6].Get<std::string>();
 
             records.push_back(info);
         } while (result->NextRow());
@@ -1217,21 +1155,21 @@ public:
 private:
     void DeleteOldReplays() {
         // delete all the replays older than X days
-        const auto days = sConfigMgr->GetOption<uint32>("ArenaReplay.DeleteReplaysAfterDays", 0);
+        const auto days = sConfigMgr->GetOption<uint32>("ArenaReplay.DeleteReplaysAfterDays", 30);
         if (days > 0)
         {
             std::string addition = "";
 
-            const bool deleteReplays = sConfigMgr->GetOption<bool>("ArenaReplay.DeleteSavedReplays", false);
+            const bool deleteSavedReplays = sConfigMgr->GetOption<bool>("ArenaReplay.DeleteSavedReplays", false);
 
-            if (!deleteReplays) {
+            if (!deleteSavedReplays) {
                 addition = "AND `id` NOT IN (SELECT `replay_id` FROM `character_saved_replays`)";
             }
 
             const auto query = "DELETE FROM `character_arena_replays` WHERE `timestamp` < (NOW() - INTERVAL " + std::to_string(days) + " DAY) " + addition;
             CharacterDatabase.Execute(query);
 
-            if (deleteReplays) {
+            if (deleteSavedReplays) {
                 CharacterDatabase.Execute("DELETE FROM `character_saved_replays` WHERE `replay_id` NOT IN (SELECT `id` FROM `character_arena_replays`)");
             }
         }
