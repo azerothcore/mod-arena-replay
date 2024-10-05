@@ -485,7 +485,7 @@ private:
         }
 
         // truncate last character if space
-        if (teamName.substr(teamName.size()-1, teamName.size()) == " ") {
+        if (!teamName.empty() && teamName.substr(teamName.size()-1, teamName.size()) == " ") {
             teamName.pop_back();
         }
 
