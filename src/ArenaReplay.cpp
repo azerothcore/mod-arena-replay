@@ -199,42 +199,6 @@ public:
 
       }
   }*/
-
-
-  void OnArenaStart(Battleground* bg) override
-  {
-    BgPlayersGuids playerguids;
-
-    for (const auto& playerPair : bg->GetPlayers())
-    {
-        Player* player = playerPair.second;
-        if (player->IsSpectator())
-            return;
-
-        if (!player)
-            continue;
-
-        std::string playerGuid = std::to_string(player->GetGUID().GetRawValue());
-        TeamId bgTeamId = player->GetBgTeamId();
-
-        if (bgTeamId == TEAM_ALLIANCE)
-        {
-            if (!playerguids.alliancePlayerGuids.empty())
-                playerguids.alliancePlayerGuids += ", ";
-
-            playerguids.alliancePlayerGuids += playerGuid;
-        }
-        else
-        {
-            if (!playerguids.hordePlayerGuids.empty())
-                playerguids.hordePlayerGuids += ", ";
-
-            playerguids.hordePlayerGuids += playerGuid;
-        }
-    }
-
-    bgPlayersGuids[bg->GetInstanceID()] = playerguids;
-  }
 };
 
 class ArenaReplayBGScript : public BGScript
@@ -294,6 +258,45 @@ public:
             Player* replayer = bg->GetPlayers().begin()->second;
             replayer->GetSession()->SendPacket(myPacket);
             match.packets.pop_front();
+        }
+    }
+
+    void OnBattlegroundAddPlayer(Battleground* bg, Player* player) override
+    {
+        if (!player)
+            return;
+
+        if (player->IsSpectator())
+            return;
+
+        if (!bg->isArena() && !sConfigMgr->GetOption<bool>("ArenaReplay.SaveBattlegrounds", true))
+            return;
+
+        if (!bg->isRated() && !sConfigMgr->GetOption<bool>("ArenaReplay.SaveUnratedArenas", true))
+            return;
+
+        if (bgPlayersGuids.find(bg->GetInstanceID()) == bgPlayersGuids.end())
+        {
+            BgPlayersGuids playerguids;
+            bgPlayersGuids[bg->GetInstanceID()] = playerguids;
+        }
+
+        std::string playerGuid = std::to_string(player->GetGUID().GetRawValue());
+        TeamId bgTeamId = player->GetBgTeamId();
+
+        if (bgTeamId == TEAM_ALLIANCE)
+        {
+            if (!bgPlayersGuids[bg->GetInstanceID()].alliancePlayerGuids.empty())
+                bgPlayersGuids[bg->GetInstanceID()].alliancePlayerGuids += ", ";
+
+            bgPlayersGuids[bg->GetInstanceID()].alliancePlayerGuids += playerGuid;
+        }
+        else
+        {
+            if (!bgPlayersGuids[bg->GetInstanceID()].hordePlayerGuids.empty())
+                bgPlayersGuids[bg->GetInstanceID()].hordePlayerGuids += ", ";
+
+            bgPlayersGuids[bg->GetInstanceID()].hordePlayerGuids += playerGuid;
         }
     }
 
@@ -479,6 +482,11 @@ private:
             CharacterCacheEntry const* playerData = sCharacterCache->GetCharacterCacheByGuid(ObjectGuid(_guid));
             if (playerData)
                 teamName += playerData->Name + " ";
+        }
+
+        // truncate last character if space
+        if (teamName.substr(teamName.size()-1, teamName.size()) == " ") {
+            teamName.pop_back();
         }
 
         return teamName;
