@@ -167,42 +167,6 @@ public:
     // if isReplay then return false to exit from check condition
     return !isReplay;
   }
-
-  /* WIP
-  void OnArenaStart(Battleground* bg) override
-  {
-      uint32 teamWinnerRating = 0;
-      uint32 teamLoserRating = 0;
-      uint32 teamWinnerMMR = 0;
-      uint32 teamLoserMMR = 0;
-      std::string teamWinnerName;
-      std::string teamLoserName;
-      std::string winnerGuids;
-      std::string loserGuids;
-
-      for (const auto& playerPair : bg->GetPlayers())
-      {
-          Player* player = playerPair.second;
-          if (player->IsSpectator())
-              return;
-
-          if (!player)
-              continue;
-
-          std::string playerGuid = std::to_string(player->GetGUID().GetRawValue());
-          TeamId bgTeamId = player->GetBgTeamId();
-          uint32 bgInstanceId = bg->GetInstanceID();
-          ArenaTeam* team = sArenaTeamMgr->GetArenaTeamById(bg->GetArenaTeamIdForTeam(bgTeamId));
-          uint32 arenaTeamId = bg->GetArenaTeamIdForTeam(bgTeamId);
-          TeamId teamId = static_cast<TeamId>(arenaTeamId);
-          uint32 teamMMR = bg->GetArenaMatchmakerRating(teamId);
-
-          //playerbgTeamIdMap[playerGuidCounter] = bgTeamId;
-          //playerArenaTeamMap[playerGuidCounter] = arenaTeamId;
-          //playerInstanceMap[playerGuidCounter] = bgInstanceId;
-
-      }
-  }*/
 };
 
 class ArenaReplayBGScript : public BGScript
@@ -647,20 +611,11 @@ public:
 
         // Forbidden: ', %, and , (' causes crash when using 'Replay list by player name')
         std::string inputCode = std::string(code);
-        if (inputCode.find('\'') != std::string::npos || inputCode.find('%') != std::string::npos || inputCode.find(',') != std::string::npos)
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage("Invalid input.");
-            CloseGossipMenuFor(player);
-            return false;
-        }
-
-        if (inputCode.length() > 50)
-        {
-            CloseGossipMenuFor(player);
-            return false;
-        }
-
-        if (inputCode.empty())
+        if (inputCode.find('\'') != std::string::npos ||
+            inputCode.find('%') != std::string::npos ||
+            inputCode.find(',') != std::string::npos ||
+            inputCode.length() > 50 ||
+            inputCode.empty())
         {
             ChatHandler(player->GetSession()).PSendSysMessage("Invalid input.");
             CloseGossipMenuFor(player);
@@ -841,7 +796,6 @@ private:
         //uint32 loserMMR;
     };
 
-
     std::string GetGossipText(ReplayInfo info) {
         std::string iconsTextTeam1 = GetPlayersIconTexts(info.winnerPlayerGuids);
         std::string iconsTextTeam2 = GetPlayersIconTexts(info.loserPlayerGuids);
@@ -853,7 +807,7 @@ private:
             std::to_string(info.winnerTeamRating) + ")" +
             iconsTextTeam1 + "" +
             " '" + coloredWinnerTeamName + "'" +
-            "\n vs   (" + std::to_string(info.loserTeamRating) + ")" +
+            "\n vs (" + std::to_string(info.loserTeamRating) + ")" +
             iconsTextTeam2 + "" +
             " '" + LoserTeamName + "'");
 
