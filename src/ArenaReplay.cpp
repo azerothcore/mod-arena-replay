@@ -100,7 +100,9 @@ std::unordered_map<uint32, BgPlayersGuids> bgPlayersGuids;
 class ArenaReplayServerScript : public ServerScript
 {
 public:
-    ArenaReplayServerScript() : ServerScript("ArenaReplayServerScript") {}
+    ArenaReplayServerScript() : ServerScript("ArenaReplayServerScript", {
+        SERVERHOOK_CAN_PACKET_SEND
+    }) {}
 
     bool CanPacketSend(WorldSession* session, WorldPacket& packet) override
     {
@@ -155,7 +157,9 @@ public:
 
 class ArenaReplayArenaScript : public ArenaScript {
 public:
-  ArenaReplayArenaScript() : ArenaScript("ArenaReplayArenaScript") {}
+  ArenaReplayArenaScript() : ArenaScript("ArenaReplayArenaScript", {
+      ARENAHOOK_ON_BEFORE_CHECK_WIN_CONDITION
+  }) {}
 
   bool OnBeforeArenaCheckWinConditions(Battleground *const bg) override {
     const bool isReplay = bgReplayIds.find(bg->GetInstanceID()) != bgReplayIds.end();
@@ -204,7 +208,11 @@ public:
 class ArenaReplayBGScript : public BGScript
 {
 public:
-    ArenaReplayBGScript() : BGScript("ArenaReplayBGScript") {}
+    ArenaReplayBGScript() : BGScript("ArenaReplayBGScript", {
+        ALLBATTLEGROUNDHOOK_ON_BATTLEGROUND_UPDATE,
+        ALLBATTLEGROUNDHOOK_ON_BATTLEGROUND_ADD_PLAYER,
+        ALLBATTLEGROUNDHOOK_ON_BATTLEGROUND_END
+    }) {}
 
     void OnBattlegroundUpdate(Battleground* bg, uint32 /* diff */) override
     {
@@ -1162,7 +1170,9 @@ private:
 class ConfigLoaderArenaReplay : public WorldScript
 {
 public:
-    ConfigLoaderArenaReplay() : WorldScript("config_loader_arena_replay") {}
+    ConfigLoaderArenaReplay() : WorldScript("config_loader_arena_replay", {
+        WORLDHOOK_ON_AFTER_CONFIG_LOAD
+    }) {}
     virtual void OnAfterConfigLoad(bool /*Reload*/) override {
         DeleteOldReplays();
     }
