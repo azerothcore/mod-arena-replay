@@ -3,19 +3,19 @@
 //
 #include "ArenaReplayDatabaseConnection.h"
 #include "ArenaReplay_loader.h"
+#include "ArenaTeamMgr.h"
+#include "Base32.h"
 #include "Battleground.h"
 #include "BattlegroundMgr.h"
 #include "CharacterDatabase.h"
 #include "Chat.h"
+#include "Config.h"
 #include "Opcodes.h"
 #include "Player.h"
-#include "ScriptMgr.h"
 #include "ScriptedGossip.h"
-#include <unordered_map>
-#include "Base32.h"
-#include "Config.h"
-#include "ArenaTeamMgr.h"
+#include "ScriptMgr.h"
 #include <iomanip>
+#include <unordered_map>
 
 std::vector<Opcodes> watchList =
 {
@@ -331,7 +331,8 @@ public:
         std::string winnerGuids;
         std::string loserGuids;
 
-        if (winnerTeamId == TEAM_ALLIANCE) {
+        if (winnerTeamId == TEAM_ALLIANCE)
+        {
             winnerGuids = bgPlayersGuids[bg->GetInstanceID()].alliancePlayerGuids;
             loserGuids = bgPlayersGuids[bg->GetInstanceID()].hordePlayerGuids;
         }
@@ -379,7 +380,8 @@ public:
         }
 
         const uint8 ARENA_TYPE_3V3_SOLO_QUEUE = sConfigMgr->GetOption<uint8>("ArenaReplay.3v3soloQ.ArenaType", 4);
-        if (bg->isArena() && (!bg->isRated() || bg->GetArenaType() == ARENA_TYPE_3V3_SOLO_QUEUE)) {
+        if (bg->isArena() && (!bg->isRated() || bg->GetArenaType() == ARENA_TYPE_3V3_SOLO_QUEUE))
+        {
             teamWinnerName = GetTeamName(winnerGuids);
             teamLoserName = GetTeamName(loserGuids);
         }
@@ -1110,7 +1112,8 @@ private:
 
             WorldPacket packet(opcode, packetSize);
 
-            if (packetSize > 0) {
+            if (packetSize > 0)
+            {
                 std::vector<uint8> tmp(packetSize, 0);
                 buffer.read(&tmp[0], packetSize);
                 packet.append(&tmp[0], packetSize);
@@ -1127,12 +1130,14 @@ public:
     ConfigLoaderArenaReplay() : WorldScript("config_loader_arena_replay", {
         WORLDHOOK_ON_AFTER_CONFIG_LOAD
     }) {}
-    virtual void OnAfterConfigLoad(bool /*Reload*/) override {
+    virtual void OnAfterConfigLoad(bool /*Reload*/) override
+    {
         DeleteOldReplays();
     }
 
 private:
-    void DeleteOldReplays() {
+    void DeleteOldReplays()
+    {
         // delete all the replays older than X days
         const auto days = sConfigMgr->GetOption<uint32>("ArenaReplay.DeleteReplaysAfterDays", 30);
         if (days > 0)
@@ -1141,16 +1146,14 @@ private:
 
             const bool deleteSavedReplays = sConfigMgr->GetOption<bool>("ArenaReplay.DeleteSavedReplays", false);
 
-            if (!deleteSavedReplays) {
+            if (!deleteSavedReplays)
                 addition = "AND `id` NOT IN (SELECT `replay_id` FROM `character_saved_replays`)";
-            }
 
             const auto query = "DELETE FROM `character_arena_replays` WHERE `timestamp` < (NOW() - INTERVAL " + std::to_string(days) + " DAY) " + addition;
             CharacterDatabase.Execute(query);
 
-            if (deleteSavedReplays) {
+            if (deleteSavedReplays)
                 CharacterDatabase.Execute("DELETE FROM `character_saved_replays` WHERE `replay_id` NOT IN (SELECT `id` FROM `character_arena_replays`)");
-            }
         }
     }
 };

@@ -3,7 +3,8 @@
 
 #include "ByteBuffer.h"
 
-class ArenaReplayByteBuffer : public ByteBuffer {
+class ArenaReplayByteBuffer : public ByteBuffer
+{
     public:
         std::vector<uint8> contentsAsVector()
         {
