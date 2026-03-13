@@ -104,7 +104,7 @@ public:
         SERVERHOOK_CAN_PACKET_SEND
     }) {}
 
-    bool CanPacketSend(WorldSession* session, WorldPacket& packet) override
+    bool CanPacketSend(WorldSession* session, WorldPacket const& packet) override
     {
         if (session == nullptr || session->GetPlayer() == nullptr)
             return true;
