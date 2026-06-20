@@ -309,6 +309,7 @@ public:
 
         /** serialize arena replay data **/
         // Stay safely below ByteBuffer's hard 10,000,000-byte ASSERT in append(); crossing it crashes the worldserver.
+        // https://github.com/azerothcore/azerothcore-wotlk/blob/23c6909eb611173c0decc68a32e42cc41f84126b/src/server/shared/Packets/ByteBuffer.cpp#L114
         constexpr uint32 REPLAY_MAX_BUFFER_SIZE = 9000000;
 
         ArenaReplayByteBuffer buffer;
