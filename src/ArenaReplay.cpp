@@ -10,6 +10,7 @@
 #include "CharacterDatabase.h"
 #include "Chat.h"
 #include "Config.h"
+#include "Log.h"
 #include "Opcodes.h"
 #include "Player.h"
 #include "ScriptedGossip.h"
@@ -307,6 +308,9 @@ public:
         MatchRecord& match = it->second;
 
         /** serialize arena replay data **/
+        // Stay safely below ByteBuffer's hard 10,000,000-byte ASSERT in append(); crossing it crashes the worldserver.
+        constexpr uint32 REPLAY_MAX_BUFFER_SIZE = 9000000;
+
         ArenaReplayByteBuffer buffer;
         uint32 headerSize;
         uint32 timestamp;
@@ -314,6 +318,14 @@ public:
         {
             headerSize = it.packet.size(); //header 4Bytes packet size
             timestamp = it.timestamp;
+
+            // break on a packet boundary so the written stream stays well-framed for playback
+            if (buffer.size() + sizeof(headerSize) + sizeof(timestamp) + sizeof(uint16) + headerSize >= REPLAY_MAX_BUFFER_SIZE)
+            {
+                LOG_WARN("module", "ArenaReplay: replay for instance {} reached the {}-byte limit, truncating.",
+                    bg->GetInstanceID(), REPLAY_MAX_BUFFER_SIZE);
+                break;
+            }
 
             buffer << headerSize; // 4 bytes
             buffer << timestamp; // 4 bytes
