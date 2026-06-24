@@ -76,9 +76,7 @@ std::vector<Opcodes> watchList =
         SMSG_DISMOUNT,
         CMSG_MOUNTSPECIAL_ANIM,
         SMSG_MOUNTSPECIAL_ANIM,
-        SMSG_MIRRORIMAGE_DATA,
-        CMSG_MESSAGECHAT,
-        SMSG_MESSAGECHAT
+        SMSG_MIRRORIMAGE_DATA
 };
 
 /*
