@@ -76,7 +76,8 @@ std::vector<Opcodes> watchList =
         SMSG_DISMOUNT,
         CMSG_MOUNTSPECIAL_ANIM,
         SMSG_MOUNTSPECIAL_ANIM,
-        SMSG_MIRRORIMAGE_DATA
+        SMSG_MIRRORIMAGE_DATA,
+        SMSG_MESSAGECHAT
 };
 
 /*
@@ -87,6 +88,34 @@ SMSG_PLAY_SOUND
 SMSG_PLAY_SPELL_VISUAL
 CMSG_ATTACKSWING
 CMSG_ATTACKSTOP*/
+
+// SMSG_MESSAGECHAT starts with the uint8 chat type, see ChatHandler::BuildChatPacket.
+// Only local chat everyone around could hear belongs in a replay: whisper, party, guild
+// and channel are private to the recorded player, and the arena spectator addon sends its
+// data as CHAT_MSG_WHISPER + LANG_ADDON too.
+static bool IsReplayableChatPacket(WorldPacket const& packet)
+{
+    if (packet.GetOpcode() != SMSG_MESSAGECHAT)
+        return true;
+
+    // contents() throws on an empty buffer
+    if (packet.empty())
+        return false;
+
+    switch (packet.contents()[0])
+    {
+        case CHAT_MSG_SAY:
+        case CHAT_MSG_YELL:
+        case CHAT_MSG_EMOTE:
+        case CHAT_MSG_TEXT_EMOTE:
+        case CHAT_MSG_MONSTER_SAY:
+        case CHAT_MSG_MONSTER_YELL:
+        case CHAT_MSG_MONSTER_EMOTE:
+            return true;
+        default:
+            return false;
+    }
+}
 
 struct PacketRecord { uint32 timestamp; WorldPacket packet; };
 struct MatchRecord { BattlegroundTypeId typeId; uint8 arenaTypeId; uint32 mapId; std::deque<PacketRecord> packets; };
@@ -138,6 +167,9 @@ public:
 
         // ignore packets not in watch list
         if (std::find(watchList.begin(), watchList.end(), packet.GetOpcode()) == watchList.end())
+            return true;
+
+        if (!IsReplayableChatPacket(packet))
             return true;
 
         if (records.find(bg->GetInstanceID()) == records.end())
@@ -1129,6 +1161,10 @@ private:
                 buffer.read(&tmp[0], packetSize);
                 packet.append(&tmp[0], packetSize);
             }
+
+            // replays stored before the chat filter existed still carry every chat type
+            if (!IsReplayableChatPacket(packet))
+                continue;
 
             record.packets.push_back({ packetTimestamp, packet });
         }
