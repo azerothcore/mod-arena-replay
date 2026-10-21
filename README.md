@@ -9,12 +9,6 @@ The arena replay module allows you to watch a replay of rated arena games (I thi
 You can see a little bit of how the module works here:
 https://www.youtube.com/watch?v=7z0RA6Dsm9s
 
-### Known issue
-
-it's not 100% done yet because if a player tries to watch a Replay of a game that he was in, the replay acts weirdly. Words of the guy who updated the module:
-"try spectating as a player who wasn't involved in the arena
-I need to change it so that it uses new duplicate players instead of"
-
 ### Usage
 
 `.npc add 98500`
