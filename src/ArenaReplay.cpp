@@ -1,6 +1,7 @@
 //
 // Created by romain-p on 17/10/2021.
 //
+#include "ArenaReplayCloneRewriter.h"
 #include "ArenaReplayDatabaseConnection.h"
 #include "ArenaReplay_loader.h"
 #include "ArenaTeamMgr.h"
@@ -11,8 +12,10 @@
 #include "Chat.h"
 #include "Config.h"
 #include "Log.h"
+#include "ObjectMgr.h"
 #include "Opcodes.h"
 #include "Player.h"
+#include "QueryPackets.h"
 #include "ScriptedGossip.h"
 #include "ScriptMgr.h"
 #include <iomanip>
@@ -117,20 +120,128 @@ static bool IsReplayableChatPacket(WorldPacket const& packet)
     }
 }
 
+// Derived from the watcher alone, so a name query for it can be answered
+// without any replay state.
+static ObjectGuid GetReplayCloneGuid(ObjectGuid watcher)
+{
+    uint64 high = watcher.GetRawValue() & ~uint64(0xFFFFFFFF);
+    uint32 low = 0xFFFFFFFF - uint32(watcher.GetRawValue());
+    return ObjectGuid(high | low);
+}
+
+// A counter never handed out to a character can't collide with any player.
+static bool IsReplayCloneGuidSafe(ObjectGuid clone)
+{
+    return uint32(clone.GetRawValue()) >=
+        sObjectMgr->GetGenerator<HighGuid::Player>().GetNextAfterMaxUsed();
+}
+
+static bool IsReplayParticipant(std::string const& guids, ObjectGuid watcher)
+{
+    std::stringstream stream(guids);
+    std::string entry;
+    while (std::getline(stream, entry, ','))
+    {
+        uint64 raw = 0;
+        try
+        {
+            raw = std::stoull(entry);
+        }
+        catch (std::exception const&)
+        {
+            continue;
+        }
+
+        if (raw == watcher.GetRawValue())
+            return true;
+    }
+
+    return false;
+}
+
+static WorldPacket BuildCloneNameQueryResponse(Player const* watcher,
+    ObjectGuid clone)
+{
+    std::string const name = watcher->GetName() + " - replay";
+
+    WorldPackets::Query::NameQueryResponse response;
+    response.Guid = clone.WriteAsPacked();
+    response.NameUnknown = false;
+    response.Name = name;
+    response.Race = watcher->getRace();
+    response.Sex = watcher->getGender();
+    response.Class = watcher->getClass();
+    response.Declined = false;
+    return *response.Write();
+}
+
 struct PacketRecord { uint32 timestamp; WorldPacket packet; };
-struct MatchRecord { BattlegroundTypeId typeId; uint8 arenaTypeId; uint32 mapId; std::deque<PacketRecord> packets; };
+struct MatchRecord
+{
+    BattlegroundTypeId typeId;
+    uint8 arenaTypeId;
+    uint32 mapId;
+    std::deque<PacketRecord> packets;
+    // only set when the watcher played the match
+    ObjectGuid cloneGuid;
+    bool cloneNameSent = false;
+};
 struct BgPlayersGuids { std::string alliancePlayerGuids; std::string hordePlayerGuids; };
+struct PendingReplayArrival { uint32 instanceId; TeamId teamId; };
 std::unordered_map<uint32, MatchRecord> records;
 std::unordered_map<uint64, MatchRecord> loadedReplays;
 std::unordered_map<uint32, uint32> bgReplayIds;
 std::unordered_map<uint32, BgPlayersGuids> bgPlayersGuids;
+std::unordered_map<uint32, PendingReplayArrival> pendingReplayArrivals;
+
+// Drops the invite that keeps an empty replay BG alive during the loading
+// screen, so the core deletes the BG on its next update.
+static void ReleasePendingReplayArrival(uint32 watcherCounter)
+{
+    auto it = pendingReplayArrivals.find(watcherCounter);
+    if (it == pendingReplayArrivals.end())
+        return;
+
+    PendingReplayArrival const arrival = it->second;
+    pendingReplayArrivals.erase(it);
+
+    if (Battleground* bg = sBattlegroundMgr->GetBattleground(
+        arrival.instanceId, BATTLEGROUND_TYPE_NONE))
+        bg->DecreaseInvitedCount(arrival.teamId);
+
+    bgReplayIds.erase(arrival.instanceId);
+    loadedReplays.erase(watcherCounter);
+}
 
 class ArenaReplayServerScript : public ServerScript
 {
 public:
     ArenaReplayServerScript() : ServerScript("ArenaReplayServerScript", {
-        SERVERHOOK_CAN_PACKET_SEND
+        SERVERHOOK_CAN_PACKET_SEND,
+        SERVERHOOK_CAN_PACKET_RECEIVE
     }) {}
+
+    // The core answers "unknown" for the clone GUID; this also covers
+    // queries sent after the replay ended.
+    bool CanPacketReceive(WorldSession* session,
+        WorldPacket const& packet) override
+    {
+        if (packet.GetOpcode() != CMSG_NAME_QUERY || packet.size() < 8)
+            return true;
+
+        Player* player = session ? session->GetPlayer() : nullptr;
+        if (!player)
+            return true;
+
+        ObjectGuid const guid(packet.read<uint64>(0));
+        if (guid != GetReplayCloneGuid(player->GetGUID()) ||
+            sCharacterCache->GetCharacterCacheByGuid(guid))
+            return true;
+
+        WorldPacket response = BuildCloneNameQueryResponse(player, guid);
+        session->SendPacket(&response);
+        return false;
+    }
 
     bool CanPacketSend(WorldSession* session, WorldPacket const& packet) override
     {
@@ -249,6 +360,16 @@ public:
                 bg->GetPlayers().begin()->second->LeaveBattleground(bg);
 
             return;
+        }
+
+        // the client may still cache an older name for the clone GUID
+        if (!match.cloneGuid.IsEmpty() && !match.cloneNameSent)
+        {
+            Player* watcher = bg->GetPlayers().begin()->second;
+            WorldPacket cloneName =
+                BuildCloneNameQueryResponse(watcher, match.cloneGuid);
+            watcher->GetSession()->SendPacket(&cloneName);
+            match.cloneNameSent = true;
         }
 
         //send replay data to spectator
@@ -1067,6 +1188,9 @@ private:
             return false;
         }
 
+        // a replay still waiting for this watcher would keep its BG forever
+        ReleasePendingReplayArrival(player->GetGUID().GetCounter());
+
         if (!loadReplayDataForPlayer(player, replayId))
         {
             CloseGossipMenuFor(player);
@@ -1095,8 +1219,28 @@ private:
         WorldPacket data;
 
         player->SetBattlegroundId(bg->GetInstanceID(), bgTypeId, queueSlot, true, false, TEAM_NEUTRAL);
+
+        // An empty BG with no invite is deleted on its next update, which
+        // a long loading screen outlasts. RemovePlayerAtLeave releases this
+        // invite once the watcher has arrived.
+        uint32 const watcherCounter = player->GetGUID().GetCounter();
+        TeamId const inviteTeam = player->GetBgTeamId();
+        bg->IncreaseInvitedCount(inviteTeam);
+        pendingReplayArrivals[watcherCounter] =
+            { bg->GetInstanceID(), inviteTeam };
+
         player->SetEntryPoint();
-        sBattlegroundMgr->SendToBattleground(player, bg->GetInstanceID(), bgTypeId);
+        if (!sBattlegroundMgr->SendToBattleground(player,
+            bg->GetInstanceID(), bgTypeId))
+        {
+            ReleasePendingReplayArrival(watcherCounter);
+            player->SetBattlegroundId(0, BATTLEGROUND_TYPE_NONE,
+                PLAYER_MAX_BATTLEGROUND_QUEUES, false, false, TEAM_NEUTRAL);
+            player->SetPendingSpectatorForBG(0);
+            handler.PSendSysMessage("Couldn't teleport you to the replay.");
+            return false;
+        }
+
         sBattlegroundMgr->BuildBattlegroundStatusPacket(&data, bg, queueSlot, STATUS_IN_PROGRESS, 0, bg->GetStartTime(), bg->GetArenaType(), teamId);
         player->GetSession()->SendPacket(&data);
         handler.PSendSysMessage("Replay ID {} begins.", replayId);
@@ -1106,7 +1250,10 @@ private:
 
     bool loadReplayDataForPlayer(Player* p, uint32 matchId)
     {
-        QueryResult result = CharacterDatabase.Query("SELECT id, arenaTypeId, typeId, contentSize, contents, mapId, timesWatched FROM character_arena_replays WHERE id = {}", matchId);
+        QueryResult result = CharacterDatabase.Query(
+            "SELECT id, arenaTypeId, typeId, contentSize, contents, mapId, "
+            "timesWatched, winnerPlayerGuids, loserPlayerGuids "
+            "FROM character_arena_replays WHERE id = {}", matchId);
         if (!result)
         {
             ChatHandler(p->GetSession()).PSendSysMessage("Replay data not found.");
@@ -1122,6 +1269,20 @@ private:
             return false;
         }
 
+        ObjectGuid cloneGuid;
+        if (IsReplayParticipant(fields[7].Get<std::string>(), p->GetGUID()) ||
+            IsReplayParticipant(fields[8].Get<std::string>(), p->GetGUID()))
+        {
+            cloneGuid = GetReplayCloneGuid(p->GetGUID());
+            if (!IsReplayCloneGuidSafe(cloneGuid))
+            {
+                ChatHandler(p->GetSession()).PSendSysMessage(
+                    "You can't watch this replay with this character.");
+                CloseGossipMenuFor(p);
+                return false;
+            }
+        }
+
         // Update 'timesWatched' of a Replay +1 everytime someone watches it
         uint32 timesWatched = fields[6].Get<uint32>();
         timesWatched++;
@@ -1130,8 +1291,49 @@ private:
         MatchRecord record;
         deserializeMatchData(record, fields);
 
+        if (!cloneGuid.IsEmpty())
+            rewriteReplayForClone(p, record, cloneGuid, matchId);
+
         loadedReplays[p->GetGUID().GetCounter()] = std::move(record);
         return true;
+    }
+
+    // The recorded packets carry the watcher's own GUID, which its client
+    // would apply to the watcher itself.
+    void rewriteReplayForClone(Player* watcher, MatchRecord& record,
+        ObjectGuid cloneGuid, uint32 matchId)
+    {
+        WorldPacket const cloneName =
+            BuildCloneNameQueryResponse(watcher, cloneGuid);
+        std::deque<PacketRecord> packets;
+        uint32 unreadable = 0;
+
+        for (PacketRecord& packetRecord : record.packets)
+        {
+            switch (RewriteReplayPacketForClone(packetRecord.packet,
+                watcher->GetGUID(), cloneGuid))
+            {
+                case CloneRewriteResult::Send:
+                    packets.push_back(std::move(packetRecord));
+                    break;
+                case CloneRewriteResult::CloneNameQuery:
+                    packets.push_back({ packetRecord.timestamp, cloneName });
+                    break;
+                case CloneRewriteResult::DropUnreadable:
+                    ++unreadable;
+                    break;
+                case CloneRewriteResult::Drop:
+                    break;
+            }
+        }
+
+        if (unreadable)
+            LOG_WARN("module", "ArenaReplay: dropped {} unreadable packets "
+                "from replay {} for {}", unreadable, matchId,
+                watcher->GetGUID().ToString());
+
+        record.packets = std::move(packets);
+        record.cloneGuid = cloneGuid;
     }
 
     void deserializeMatchData(MatchRecord& record, Field* fields)
@@ -1205,10 +1407,41 @@ private:
     }
 };
 
+class ArenaReplayPlayerScript : public PlayerScript
+{
+public:
+    ArenaReplayPlayerScript() : PlayerScript("ArenaReplayPlayerScript", {
+        PLAYERHOOK_ON_MAP_CHANGED,
+        PLAYERHOOK_ON_LOGOUT
+    }) {}
+
+    // Fires from Map::AddPlayerToMap, before the BG adds the watcher.
+    void OnPlayerMapChanged(Player* player) override
+    {
+        uint32 const watcherCounter = player->GetGUID().GetCounter();
+        auto it = pendingReplayArrivals.find(watcherCounter);
+        if (it == pendingReplayArrivals.end())
+            return;
+
+        Map const* map = player->GetMap();
+        if (map->IsBattlegroundOrArena() &&
+            map->GetInstanceId() == it->second.instanceId)
+            pendingReplayArrivals.erase(it);
+        else
+            ReleasePendingReplayArrival(watcherCounter);
+    }
+
+    void OnPlayerLogout(Player* player) override
+    {
+        ReleasePendingReplayArrival(player->GetGUID().GetCounter());
+    }
+};
+
 void AddArenaReplayScripts()
 {
     new ConfigLoaderArenaReplay();
     new ArenaReplayServerScript();
+    new ArenaReplayPlayerScript();
     new ArenaReplayBGScript();
     new ArenaReplayArenaScript();
     new ReplayGossip();
