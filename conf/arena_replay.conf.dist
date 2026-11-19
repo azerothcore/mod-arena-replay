@@ -38,6 +38,11 @@
 #        Default:     0 - Disabled
 #                     1 - Enabled
 #
+#    ArenaReplay.Command.Enable
+#        Description: Enable the .replay <id> command to watch a replay
+#        Default:     1 - Enabled
+#                     0 - Disabled
+#
 
 ArenaReplay.Enable = 1
 ArenaReplay.DeleteReplaysAfterDays = 30
@@ -45,6 +50,7 @@ ArenaReplay.DeleteSavedReplays = 0
 ArenaReplay.ValidArenaDuration = 75
 ArenaReplay.SaveUnratedArenas = 1
 ArenaReplay.SaveBattlegrounds = 0
+ArenaReplay.Command.Enable = 1
 
 ArenaReplay.1v1.Enable = 0
 ArenaReplay.1v1.ArenaType = 1
