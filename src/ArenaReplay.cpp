@@ -11,6 +11,7 @@
 #include "Chat.h"
 #include "Config.h"
 #include "Log.h"
+#include "Map.h"
 #include "Opcodes.h"
 #include "Player.h"
 #include "ScriptedGossip.h"
@@ -1057,7 +1058,8 @@ private:
         }
     }
 
-    bool replayArenaMatch(Player* player, uint32 replayId)
+public:
+    static bool replayArenaMatch(Player* player, uint32 replayId)
     {
         auto handler = ChatHandler(player->GetSession());
 
@@ -1104,7 +1106,8 @@ private:
         return true;
     }
 
-    bool loadReplayDataForPlayer(Player* p, uint32 matchId)
+private:
+    static bool loadReplayDataForPlayer(Player* p, uint32 matchId)
     {
         QueryResult result = CharacterDatabase.Query("SELECT id, arenaTypeId, typeId, contentSize, contents, mapId, timesWatched FROM character_arena_replays WHERE id = {}", matchId);
         if (!result)
@@ -1134,7 +1137,7 @@ private:
         return true;
     }
 
-    void deserializeMatchData(MatchRecord& record, Field* fields)
+    static void deserializeMatchData(MatchRecord& record, Field* fields)
     {
         record.arenaTypeId = uint8(fields[1].Get<uint32>());
         record.typeId = BattlegroundTypeId(fields[2].Get<uint32>());
@@ -1171,6 +1174,74 @@ private:
     }
 };
 
+static bool ArenaReplayEnable = true;
+static bool ReplayCommandEnable = true;
+
+using namespace Acore::ChatCommands;
+
+class ArenaReplayCommandScript : public CommandScript
+{
+public:
+    ArenaReplayCommandScript() : CommandScript("ArenaReplayCommandScript") { }
+
+    ChatCommandTable GetCommands() const override
+    {
+        static ChatCommandTable commandTable =
+        {
+            { "replay", HandleReplayCommand, SEC_PLAYER, Console::No }
+        };
+
+        return commandTable;
+    }
+
+    static char const* GetBlockReason(Player const* player)
+    {
+        if (player->IsBeingTeleported() || !player->IsInWorld())
+            return "Can't use while being teleported.";
+
+        if (!player->FindMap() || player->FindMap()->Instanceable())
+            return "Can't use while in instance, bg or arena.";
+
+        if (player->GetVehicle())
+            return "Can't be on a vehicle.";
+
+        if (player->IsInCombat())
+            return "Can't be in combat.";
+
+        if (player->InBattlegroundQueue())
+            return "Can't be queued for arena or bg.";
+
+        if (player->IsInFlight())
+            return "Can't be in flight.";
+
+        if (!player->IsAlive())
+            return "Must be alive.";
+
+        return nullptr;
+    }
+
+    static bool HandleReplayCommand(ChatHandler* handler, uint32 replayId)
+    {
+        Player* player = handler->GetPlayer();
+        char const* reason = (!ArenaReplayEnable || !ReplayCommandEnable) ?
+            "Arena Replay disabled!" : GetBlockReason(player);
+        if (reason)
+        {
+            handler->SendSysMessage(reason);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        if (!ReplayGossip::replayArenaMatch(player, replayId))
+        {
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        return true;
+    }
+};
+
 class ConfigLoaderArenaReplay : public WorldScript
 {
 public:
@@ -1179,6 +1250,10 @@ public:
     }) {}
     virtual void OnAfterConfigLoad(bool /*Reload*/) override
     {
+        ArenaReplayEnable =
+            sConfigMgr->GetOption<bool>("ArenaReplay.Enable", true);
+        ReplayCommandEnable =
+            sConfigMgr->GetOption<bool>("ArenaReplay.Command.Enable", true);
         DeleteOldReplays();
     }
 
@@ -1212,4 +1287,5 @@ void AddArenaReplayScripts()
     new ArenaReplayBGScript();
     new ArenaReplayArenaScript();
     new ReplayGossip();
+    new ArenaReplayCommandScript();
 }

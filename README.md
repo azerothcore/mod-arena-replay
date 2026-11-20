@@ -19,6 +19,9 @@ I need to change it so that it uses new duplicate players instead of"
 
 `.npc add 98500`
 
+Players can also watch a replay by its id with the chat command
+`.replay <id>` (needs `ArenaReplay.Command.Enable = 1`).
+
 ![image](https://github.com/user-attachments/assets/221b2304-218e-4a7b-a7c3-0cf07388319d)
 
 
