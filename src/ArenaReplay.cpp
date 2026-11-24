@@ -743,7 +743,13 @@ public:
 
                 std::string playerGuidStr = std::to_string(playerData->Guid.GetRawValue());
 
-                QueryResult result = CharacterDatabase.Query("SELECT id FROM character_arena_replays WHERE winnerPlayerGuids LIKE '%{}%' OR loserPlayerGuids LIKE '%{}%'", playerGuidStr, playerGuidStr);
+                // \? keeps the ?? fallbacks from being read as trigraphs (GCC -Wtrigraphs)
+                QueryResult result = CharacterDatabase.Query(
+                    "SELECT id, IFNULL(DATE_FORMAT(`timestamp`, '%d-%m-%Y'), '\?\?-\?\?-\?\?\?\?'), "
+                    "IFNULL(DATE_FORMAT(`timestamp`, '%H:%i:%s'), '\?\?:\?\?:\?\?') "
+                    "FROM character_arena_replays "
+                    "WHERE winnerPlayerGuids LIKE '%{}%' OR loserPlayerGuids LIKE '%{}%'",
+                    playerGuidStr, playerGuidStr);
                 if (result)
                 {
                     ChatHandler(player->GetSession()).PSendModuleSysMessage(MODULE_STRING, STRING_PLAYER_REPLAYS_FOUND, std::string(code));
@@ -751,7 +757,10 @@ public:
                     {
                         Field* fields = result->Fetch();
                         uint32 replayId = fields[0].Get<uint32>();
-                        ChatHandler(player->GetSession()).PSendModuleSysMessage(MODULE_STRING, STRING_PLAYER_REPLAY_ID, replayId);
+                        std::string replayDate = fields[1].Get<std::string>();
+                        std::string replayTime = fields[2].Get<std::string>();
+                        ChatHandler(player->GetSession()).PSendModuleSysMessage(MODULE_STRING, STRING_PLAYER_REPLAY_ID,
+                            replayId, replayDate, replayTime);
                         //AddGossipItemFor(player,) // to do: add gossips with the replays
                     } while (result->NextRow());
 
