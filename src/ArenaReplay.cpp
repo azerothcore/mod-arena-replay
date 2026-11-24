@@ -17,6 +17,7 @@
 #include "ScriptedGossip.h"
 #include "ScriptMgr.h"
 #include <iomanip>
+#include <optional>
 #include <unordered_map>
 
 constexpr char const* MODULE_STRING = "mod-arena-replay";
@@ -56,7 +57,8 @@ enum ReplayStrings
     STRING_GOSSIP_BACK = 31,
     STRING_GOSSIP_FAVORITE_MATCH_ID = 32,
     STRING_GOSSIP_NO_SAVED_REPLAYS = 33,
-    STRING_GOSSIP_REPLAY_MATCH = 34
+    STRING_GOSSIP_REPLAY_MATCH = 34,
+    STRING_GOSSIP_TIMES_WATCHED = 35
 };
 
 static std::string GetReplayString(Player* player, uint32 id)
@@ -618,7 +620,7 @@ public:
         AddGossipItemFor(player, GOSSIP_ICON_BATTLE, GetReplayString(player, STRING_GOSSIP_TOP_5V5_ALLTIME), GOSSIP_SENDER_MAIN, REPLAY_TOP_5V5_ALLTIME);
 
 
-        AddGossipItemFor(player, GOSSIP_ICON_BATTLE, GetReplayString(player, STRING_GOSSIP_MOST_WATCHED_ALLTIME), GOSSIP_SENDER_MAIN, REPLAY_MOST_WATCHED_ALLTIME);  // To Do: show arena type + watchedTimes, maybe hide team name
+        AddGossipItemFor(player, GOSSIP_ICON_BATTLE, GetReplayString(player, STRING_GOSSIP_MOST_WATCHED_ALLTIME), GOSSIP_SENDER_MAIN, REPLAY_MOST_WATCHED_ALLTIME);  // To Do: show arena type, maybe hide team name
         SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, creature->GetGUID());
 
         return true;
@@ -892,6 +894,8 @@ private:
         std::string loserTeamName;
         uint32 loserTeamRating;
 
+        std::optional<uint32> TimesWatched;
+
         //uint32 winnerMMR;
         //uint32 loserMMR;
     };
@@ -903,11 +907,14 @@ private:
         std::string coloredWinnerTeamName = "|cff33691E" + info.winnerTeamName + "|r";
         std::string LoserTeamName = info.loserTeamName;
 
+        // The most watched list puts both teams on one line, the count below
+        std::string const vs = info.TimesWatched ? " vs (" : "\n vs (";
+
         std::string gossipText = ("[" + std::to_string(info.matchId) + "] (" +
             std::to_string(info.winnerTeamRating) + ")" +
             iconsTextTeam1 + "" +
             " '" + coloredWinnerTeamName + "'" +
-            "\n vs (" + std::to_string(info.loserTeamRating) + ")" +
+            vs + std::to_string(info.loserTeamRating) + ")" +
             iconsTextTeam2 + "" +
             " '" + LoserTeamName + "'");
 
@@ -1013,7 +1020,15 @@ private:
             AddGossipItemFor(player, GOSSIP_ICON_TRAINER, GetReplayString(player, STRING_GOSSIP_LIST_HEADER), GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF); // Back to Main Menu
             for (const auto& info : matchInfos)
             {
-                const std::string gossipText = GetGossipText(info);
+                std::string gossipText = GetGossipText(info);
+                if (info.TimesWatched)
+                {
+                    ChatHandler handler(player->GetSession());
+                    gossipText += "\n " + handler.PGetParseModuleString(
+                        MODULE_STRING, STRING_GOSSIP_TIMES_WATCHED,
+                        *info.TimesWatched);
+                }
+
                 const uint32 actionOffset = GOSSIP_ACTION_INFO_DEF + 30;
                 AddGossipItemFor(player, GOSSIP_ICON_BATTLE, gossipText, GOSSIP_SENDER_MAIN, actionOffset + info.matchId);
             }
@@ -1027,7 +1042,8 @@ private:
     {
         std::vector<ReplayInfo> records;
         QueryResult result = CharacterDatabase.Query(
-            "SELECT id, winnerTeamName, winnerTeamRating, winnerPlayerGuids, loserTeamName, loserTeamRating, loserPlayerGuids "
+            "SELECT id, winnerTeamName, winnerTeamRating, winnerPlayerGuids, "
+            "loserTeamName, loserTeamRating, loserPlayerGuids, timesWatched "
             "FROM character_arena_replays "
             "ORDER BY timesWatched DESC, winnerTeamRating DESC "
             "LIMIT 28");
@@ -1049,6 +1065,7 @@ private:
             info.loserTeamName = fields[4].Get<std::string>();
             info.loserTeamRating = fields[5].Get<uint32>();
             info.loserPlayerGuids = fields[6].Get<std::string>();
+            info.TimesWatched = fields[7].Get<uint32>();
 
             records.push_back(info);
         } while (result->NextRow());
