@@ -8,12 +8,9 @@
 #include "UpdateFields.h"
 #include <span>
 #include <vector>
-#include <zlib.h>
 
 namespace
 {
-    // keeps the inflated buffer below ByteBuffer's 10,000,000 byte ASSERT
-    constexpr uint32 MaxUncompressedUpdateSize = 9000000;
     constexpr uint8 MonsterMoveFacingTarget = 3;
     constexpr std::size_t NoValue = std::size_t(-1);
 
@@ -89,25 +86,6 @@ namespace
     void CopyTail(ByteBuffer& in, ByteBuffer& out)
     {
         CopyBytes(in, out, in.size() - in.rpos());
-    }
-
-    ByteBuffer Decompress(ByteBuffer& in)
-    {
-        uint32 const size = in.read<uint32>();
-        if (!size || size > MaxUncompressedUpdateSize)
-            throw ByteBufferInvalidValueException("uncompressed size",
-                "out of range");
-
-        ByteBuffer body(size);
-        body.resize(size);
-        uLongf bodySize = size;
-        int const result = uncompress(body.contents(), &bodySize,
-            in.contents() + in.rpos(), in.size() - in.rpos());
-        if (result != Z_OK || bodySize != size)
-            throw ByteBufferInvalidValueException("zlib stream", "corrupt");
-
-        in.rfinish();
-        return body;
     }
 
     class CloneRewriter
@@ -484,16 +462,6 @@ namespace
                 if (!CopyUpdateObject(packet, out))
                     return CloneRewriteResult::Drop;
                 break;
-            case SMSG_COMPRESSED_UPDATE_OBJECT:
-            {
-                // recorded before the network thread took over compression;
-                // the socket compresses the rewritten packet again
-                ByteBuffer body = Decompress(packet);
-                out.SetOpcode(SMSG_UPDATE_OBJECT);
-                if (!CopyUpdateObject(body, out))
-                    return CloneRewriteResult::Drop;
-                break;
-            }
             case SMSG_DESTROY_OBJECT:
                 if (ObjectGuid(packet.read<uint64>(0)).IsItem())
                     return CloneRewriteResult::Drop;

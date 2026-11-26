@@ -62,8 +62,7 @@ enum ReplayStrings
     STRING_GOSSIP_NO_SAVED_REPLAYS = 33,
     STRING_GOSSIP_REPLAY_MATCH = 34,
     STRING_GOSSIP_TIMES_WATCHED = 35,
-    STRING_REPLAY_OWN_MATCH_BLOCKED = 36,
-    STRING_REPLAY_TELEPORT_FAILED = 37
+    STRING_REPLAY_OWN_MATCH_BLOCKED = 36
 };
 
 static std::string GetReplayString(Player* player, uint32 id)
@@ -234,34 +233,12 @@ struct MatchRecord
     std::deque<PacketRecord> packets;
     // only set when the watcher played the match
     ObjectGuid cloneGuid;
-    bool cloneNameSent = false;
 };
 struct BgPlayersGuids { std::string alliancePlayerGuids; std::string hordePlayerGuids; };
-struct PendingReplayArrival { uint32 instanceId; TeamId teamId; };
 std::unordered_map<uint32, MatchRecord> records;
 std::unordered_map<uint64, MatchRecord> loadedReplays;
 std::unordered_map<uint32, uint32> bgReplayIds;
 std::unordered_map<uint32, BgPlayersGuids> bgPlayersGuids;
-std::unordered_map<uint32, PendingReplayArrival> pendingReplayArrivals;
-
-// Drops the invite that keeps an empty replay BG alive during the loading
-// screen, so the core deletes the BG on its next update.
-static void ReleasePendingReplayArrival(uint32 watcherCounter)
-{
-    auto it = pendingReplayArrivals.find(watcherCounter);
-    if (it == pendingReplayArrivals.end())
-        return;
-
-    PendingReplayArrival const arrival = it->second;
-    pendingReplayArrivals.erase(it);
-
-    if (Battleground* bg = sBattlegroundMgr->GetBattleground(
-        arrival.instanceId, BATTLEGROUND_TYPE_NONE))
-        bg->DecreaseInvitedCount(arrival.teamId);
-
-    bgReplayIds.erase(arrival.instanceId);
-    loadedReplays.erase(watcherCounter);
-}
 
 class ArenaReplayServerScript : public ServerScript
 {
@@ -410,16 +387,6 @@ public:
                 bg->GetPlayers().begin()->second->LeaveBattleground(bg);
 
             return;
-        }
-
-        // the client may still cache an older name for the clone GUID
-        if (!match.cloneGuid.IsEmpty() && !match.cloneNameSent)
-        {
-            Player* watcher = bg->GetPlayers().begin()->second;
-            WorldPacket cloneName =
-                BuildCloneNameQueryResponse(watcher, match.cloneGuid);
-            watcher->GetSession()->SendPacket(&cloneName);
-            match.cloneNameSent = true;
         }
 
         //send replay data to spectator
@@ -1263,9 +1230,6 @@ public:
             return false;
         }
 
-        // a replay still waiting for this watcher would keep its BG forever
-        ReleasePendingReplayArrival(player->GetGUID().GetCounter());
-
         if (!loadReplayDataForPlayer(player, replayId))
         {
             CloseGossipMenuFor(player);
@@ -1294,29 +1258,8 @@ public:
         WorldPacket data;
 
         player->SetBattlegroundId(bg->GetInstanceID(), bgTypeId, queueSlot, true, false, TEAM_NEUTRAL);
-
-        // An empty BG with no invite is deleted on its next update, which
-        // a long loading screen outlasts. RemovePlayerAtLeave releases this
-        // invite once the watcher has arrived.
-        uint32 const watcherCounter = player->GetGUID().GetCounter();
-        TeamId const inviteTeam = player->GetBgTeamId();
-        bg->IncreaseInvitedCount(inviteTeam);
-        pendingReplayArrivals[watcherCounter] =
-            { bg->GetInstanceID(), inviteTeam };
-
         player->SetEntryPoint();
-        if (!sBattlegroundMgr->SendToBattleground(player,
-            bg->GetInstanceID(), bgTypeId))
-        {
-            ReleasePendingReplayArrival(watcherCounter);
-            player->SetBattlegroundId(0, BATTLEGROUND_TYPE_NONE,
-                PLAYER_MAX_BATTLEGROUND_QUEUES, false, false, TEAM_NEUTRAL);
-            player->SetPendingSpectatorForBG(0);
-            handler.PSendModuleSysMessage(MODULE_STRING,
-                STRING_REPLAY_TELEPORT_FAILED);
-            return false;
-        }
-
+        sBattlegroundMgr->SendToBattleground(player, bg->GetInstanceID(), bgTypeId);
         sBattlegroundMgr->BuildBattlegroundStatusPacket(&data, bg, queueSlot, STATUS_IN_PROGRESS, 0, bg->GetStartTime(), bg->GetArenaType(), teamId);
         player->GetSession()->SendPacket(&data);
         handler.PSendModuleSysMessage(MODULE_STRING, STRING_REPLAY_BEGINS, replayId);
@@ -1556,41 +1499,10 @@ private:
     }
 };
 
-class ArenaReplayPlayerScript : public PlayerScript
-{
-public:
-    ArenaReplayPlayerScript() : PlayerScript("ArenaReplayPlayerScript", {
-        PLAYERHOOK_ON_MAP_CHANGED,
-        PLAYERHOOK_ON_LOGOUT
-    }) {}
-
-    // Fires from Map::AddPlayerToMap, before the BG adds the watcher.
-    void OnPlayerMapChanged(Player* player) override
-    {
-        uint32 const watcherCounter = player->GetGUID().GetCounter();
-        auto it = pendingReplayArrivals.find(watcherCounter);
-        if (it == pendingReplayArrivals.end())
-            return;
-
-        Map const* map = player->GetMap();
-        if (map->IsBattlegroundOrArena() &&
-            map->GetInstanceId() == it->second.instanceId)
-            pendingReplayArrivals.erase(it);
-        else
-            ReleasePendingReplayArrival(watcherCounter);
-    }
-
-    void OnPlayerLogout(Player* player) override
-    {
-        ReleasePendingReplayArrival(player->GetGUID().GetCounter());
-    }
-};
-
 void AddArenaReplayScripts()
 {
     new ConfigLoaderArenaReplay();
     new ArenaReplayServerScript();
-    new ArenaReplayPlayerScript();
     new ArenaReplayBGScript();
     new ArenaReplayArenaScript();
     new ReplayGossip();
