@@ -19,6 +19,7 @@
 #include "QueryPackets.h"
 #include "ScriptedGossip.h"
 #include "ScriptMgr.h"
+#include <algorithm>
 #include <iomanip>
 #include <optional>
 #include <unordered_map>
@@ -1295,13 +1296,30 @@ private:
             }
         }
 
+        MatchRecord record;
+        deserializeMatchData(record, fields);
+
+        auto const isCompressed = [](PacketRecord const& packetRecord)
+        {
+            return packetRecord.packet.GetOpcode() ==
+                SMSG_COMPRESSED_UPDATE_OBJECT;
+        };
+
+        // Recorded before the core compressed in the socket: the rewriter
+        // can't read these, and dropping them leaves players out.
+        if (!cloneGuid.IsEmpty() && std::any_of(record.packets.begin(),
+            record.packets.end(), isCompressed))
+        {
+            ChatHandler(p->GetSession()).PSendModuleSysMessage(
+                MODULE_STRING, STRING_REPLAY_OWN_MATCH_BLOCKED);
+            CloseGossipMenuFor(p);
+            return false;
+        }
+
         // Update 'timesWatched' of a Replay +1 everytime someone watches it
         uint32 timesWatched = fields[6].Get<uint32>();
         timesWatched++;
         CharacterDatabase.Execute("UPDATE character_arena_replays SET timesWatched = {} WHERE id = {}", timesWatched, matchId);
-
-        MatchRecord record;
-        deserializeMatchData(record, fields);
 
         if (!cloneGuid.IsEmpty())
             rewriteReplayForClone(p, record, cloneGuid, matchId);
