@@ -36,7 +36,8 @@ INSERT INTO `module_string` (`module`, `id`, `string`) VALUES
 (@MODULE, 32, 'Favorite a Match ID'),
 (@MODULE, 33, 'No saved replays found.'),
 (@MODULE, 34, 'Replay match {}'),
-(@MODULE, 35, 'Views: {}');
+(@MODULE, 35, 'Views: {}'),
+(@MODULE, 36, 'You can\'t watch this replay with this character.');
 
 DELETE FROM `module_string_locale` WHERE `module` = @MODULE;
 INSERT INTO `module_string_locale` (`module`, `id`, `locale`, `string`) VALUES
@@ -75,6 +76,7 @@ INSERT INTO `module_string_locale` (`module`, `id`, `locale`, `string`) VALUES
 (@MODULE, 33, 'koKR', '저장된 리플레이가 없습니다.'),
 (@MODULE, 34, 'koKR', '경기 리플레이 {}'),
 (@MODULE, 35, 'koKR', '시청 횟수: {}'),
+(@MODULE, 36, 'koKR', '이 캐릭터로는 이 리플레이를 볼 수 없습니다.'),
 (@MODULE, 1, 'frFR', 'Replay enregistré. ID du match : {}'),
 (@MODULE, 2, 'frFR', 'Replay d\'arène désactivé !'),
 (@MODULE, 3, 'frFR', 'Saisie invalide.'),
@@ -110,6 +112,7 @@ INSERT INTO `module_string_locale` (`module`, `id`, `locale`, `string`) VALUES
 (@MODULE, 33, 'frFR', 'Aucun replay enregistré trouvé.'),
 (@MODULE, 34, 'frFR', 'Revoir le match {}'),
 (@MODULE, 35, 'frFR', 'Vues : {}'),
+(@MODULE, 36, 'frFR', 'Vous ne pouvez pas regarder ce replay avec ce personnage.'),
 (@MODULE, 1, 'deDE', 'Replay gespeichert. Match-ID: {}'),
 (@MODULE, 2, 'deDE', 'Arena-Replay deaktiviert!'),
 (@MODULE, 3, 'deDE', 'Ungültige Eingabe.'),
@@ -145,6 +148,7 @@ INSERT INTO `module_string_locale` (`module`, `id`, `locale`, `string`) VALUES
 (@MODULE, 33, 'deDE', 'Keine gespeicherten Replays gefunden.'),
 (@MODULE, 34, 'deDE', 'Match {} ansehen'),
 (@MODULE, 35, 'deDE', 'Aufrufe: {}'),
+(@MODULE, 36, 'deDE', 'Du kannst dieses Replay mit diesem Charakter nicht ansehen.'),
 (@MODULE, 1, 'zhCN', '录像已保存。比赛ID：{}'),
 (@MODULE, 2, 'zhCN', '竞技场录像已禁用！'),
 (@MODULE, 3, 'zhCN', '输入无效。'),
@@ -180,6 +184,7 @@ INSERT INTO `module_string_locale` (`module`, `id`, `locale`, `string`) VALUES
 (@MODULE, 33, 'zhCN', '未找到已保存的录像。'),
 (@MODULE, 34, 'zhCN', '观看比赛 {}'),
 (@MODULE, 35, 'zhCN', '观看次数：{}'),
+(@MODULE, 36, 'zhCN', '你无法使用此角色观看此录像。'),
 (@MODULE, 1, 'zhTW', '重播已儲存。比賽ID：{}'),
 (@MODULE, 2, 'zhTW', '競技場重播已停用！'),
 (@MODULE, 3, 'zhTW', '輸入無效。'),
@@ -215,6 +220,7 @@ INSERT INTO `module_string_locale` (`module`, `id`, `locale`, `string`) VALUES
 (@MODULE, 33, 'zhTW', '找不到已儲存的重播。'),
 (@MODULE, 34, 'zhTW', '觀看比賽 {}'),
 (@MODULE, 35, 'zhTW', '觀看次數：{}'),
+(@MODULE, 36, 'zhTW', '你無法使用此角色觀看此重播。'),
 (@MODULE, 1, 'esES', 'Repetición guardada. ID de partida: {}'),
 (@MODULE, 2, 'esES', '¡Repetición de arena desactivada!'),
 (@MODULE, 3, 'esES', 'Entrada no válida.'),
@@ -250,6 +256,7 @@ INSERT INTO `module_string_locale` (`module`, `id`, `locale`, `string`) VALUES
 (@MODULE, 33, 'esES', 'No se encontraron repeticiones guardadas.'),
 (@MODULE, 34, 'esES', 'Ver partida {}'),
 (@MODULE, 35, 'esES', 'Visualizaciones: {}'),
+(@MODULE, 36, 'esES', 'No puedes ver esta repetición con este personaje.'),
 (@MODULE, 1, 'esMX', 'Repetición guardada. ID de partida: {}'),
 (@MODULE, 2, 'esMX', '¡Repetición de arena desactivada!'),
 (@MODULE, 3, 'esMX', 'Entrada no válida.'),
@@ -285,6 +292,7 @@ INSERT INTO `module_string_locale` (`module`, `id`, `locale`, `string`) VALUES
 (@MODULE, 33, 'esMX', 'No se encontraron repeticiones guardadas.'),
 (@MODULE, 34, 'esMX', 'Ver partida {}'),
 (@MODULE, 35, 'esMX', 'Visualizaciones: {}'),
+(@MODULE, 36, 'esMX', 'No puedes ver esta repetición con este personaje.'),
 (@MODULE, 1, 'ruRU', 'Запись сохранена. ID матча: {}'),
 (@MODULE, 2, 'ruRU', 'Записи арены отключены!'),
 (@MODULE, 3, 'ruRU', 'Неверный ввод.'),
@@ -319,4 +327,5 @@ INSERT INTO `module_string_locale` (`module`, `id`, `locale`, `string`) VALUES
 (@MODULE, 32, 'ruRU', 'Добавить ID матча в избранное'),
 (@MODULE, 33, 'ruRU', 'Сохранённые записи не найдены.'),
 (@MODULE, 34, 'ruRU', 'Смотреть матч {}'),
-(@MODULE, 35, 'ruRU', 'Просмотры: {}');
+(@MODULE, 35, 'ruRU', 'Просмотры: {}'),
+(@MODULE, 36, 'ruRU', 'Вы не можете смотреть эту запись этим персонажем.');
