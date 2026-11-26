@@ -225,15 +225,7 @@ static WorldPacket BuildCloneNameQueryResponse(Player const* watcher,
 }
 
 struct PacketRecord { uint32 timestamp; WorldPacket packet; };
-struct MatchRecord
-{
-    BattlegroundTypeId typeId;
-    uint8 arenaTypeId;
-    uint32 mapId;
-    std::deque<PacketRecord> packets;
-    // only set when the watcher played the match
-    ObjectGuid cloneGuid;
-};
+struct MatchRecord { BattlegroundTypeId typeId; uint8 arenaTypeId; uint32 mapId; std::deque<PacketRecord> packets; };
 struct BgPlayersGuids { std::string alliancePlayerGuids; std::string hordePlayerGuids; };
 std::unordered_map<uint32, MatchRecord> records;
 std::unordered_map<uint64, MatchRecord> loadedReplays;
@@ -1353,7 +1345,6 @@ private:
                 watcher->GetGUID().ToString());
 
         record.packets = std::move(packets);
-        record.cloneGuid = cloneGuid;
     }
 
     static void deserializeMatchData(MatchRecord& record, Field* fields)
