@@ -254,7 +254,8 @@ public:
     ArenaReplayBGScript() : BGScript("ArenaReplayBGScript", {
         ALLBATTLEGROUNDHOOK_ON_BATTLEGROUND_UPDATE,
         ALLBATTLEGROUNDHOOK_ON_BATTLEGROUND_ADD_PLAYER,
-        ALLBATTLEGROUNDHOOK_ON_BATTLEGROUND_END
+        ALLBATTLEGROUNDHOOK_ON_BATTLEGROUND_END,
+        ALLBATTLEGROUNDHOOK_ON_BATTLEGROUND_DESTROY
     }) {}
 
     void OnBattlegroundUpdate(Battleground* bg, uint32 /* diff */) override
@@ -367,11 +368,13 @@ public:
 
         // save replay when a bg ends
         if (!isReplay && ValidArena)
-        {
-           saveReplay(bg, winnerTeamId);
-           return;
-        }
+            saveReplay(bg, winnerTeamId);
+    }
 
+    // ~Battleground calls this for every BG; a replay BG that empties
+    // before a time limit ends it is deleted without OnBattlegroundEnd
+    void OnBattlegroundDestroy(Battleground* bg) override
+    {
         bgReplayIds.erase(bg->GetInstanceID());
         bgPlayersGuids.erase(bg->GetInstanceID());
     }
