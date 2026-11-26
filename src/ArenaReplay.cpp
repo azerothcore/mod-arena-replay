@@ -1,6 +1,7 @@
 //
 // Created by romain-p on 17/10/2021.
 //
+#include "ArenaReplayCloneRewriter.h"
 #include "ArenaReplayDatabaseConnection.h"
 #include "ArenaReplay_loader.h"
 #include "ArenaTeamMgr.h"
@@ -12,10 +13,13 @@
 #include "Config.h"
 #include "Log.h"
 #include "Map.h"
+#include "ObjectMgr.h"
 #include "Opcodes.h"
 #include "Player.h"
+#include "QueryPackets.h"
 #include "ScriptedGossip.h"
 #include "ScriptMgr.h"
+#include <algorithm>
 #include <iomanip>
 #include <optional>
 #include <unordered_map>
@@ -59,6 +63,7 @@ enum ReplayStrings
     STRING_GOSSIP_NO_SAVED_REPLAYS = 33,
     STRING_GOSSIP_REPLAY_MATCH = 34,
     STRING_GOSSIP_TIMES_WATCHED = 35,
+    STRING_REPLAY_OWN_MATCH_BLOCKED = 36,
     STRING_REPLAY_TELEPORT_FAILED = 37
 };
 
@@ -166,6 +171,61 @@ static bool IsReplayableChatPacket(WorldPacket const& packet)
     }
 }
 
+// Derived from the watcher alone, so a name query for it can be answered
+// without any replay state.
+static ObjectGuid GetReplayCloneGuid(ObjectGuid watcher)
+{
+    uint64 high = watcher.GetRawValue() & ~uint64(0xFFFFFFFF);
+    uint32 low = 0xFFFFFFFF - uint32(watcher.GetRawValue());
+    return ObjectGuid(high | low);
+}
+
+// A counter never handed out to a character can't collide with any player.
+static bool IsReplayCloneGuidSafe(ObjectGuid clone)
+{
+    return uint32(clone.GetRawValue()) >=
+        sObjectMgr->GetGenerator<HighGuid::Player>().GetNextAfterMaxUsed();
+}
+
+static bool IsReplayParticipant(std::string const& guids, ObjectGuid watcher)
+{
+    std::stringstream stream(guids);
+    std::string entry;
+    while (std::getline(stream, entry, ','))
+    {
+        uint64 raw = 0;
+        try
+        {
+            raw = std::stoull(entry);
+        }
+        catch (std::exception const&)
+        {
+            continue;
+        }
+
+        if (raw == watcher.GetRawValue())
+            return true;
+    }
+
+    return false;
+}
+
+static WorldPacket BuildCloneNameQueryResponse(Player const* watcher,
+    ObjectGuid clone)
+{
+    std::string const name = watcher->GetName() + " - replay";
+
+    WorldPackets::Query::NameQueryResponse response;
+    response.Guid = clone.WriteAsPacked();
+    response.NameUnknown = false;
+    response.Name = name;
+    response.Race = watcher->getRace();
+    response.Sex = watcher->getGender();
+    response.Class = watcher->getClass();
+    response.Declined = false;
+    return *response.Write();
+}
+
 struct PacketRecord { uint32 timestamp; WorldPacket packet; };
 struct MatchRecord { BattlegroundTypeId typeId; uint8 arenaTypeId; uint32 mapId; std::deque<PacketRecord> packets; };
 struct BgPlayersGuids { std::string alliancePlayerGuids; std::string hordePlayerGuids; };
@@ -199,8 +259,31 @@ class ArenaReplayServerScript : public ServerScript
 {
 public:
     ArenaReplayServerScript() : ServerScript("ArenaReplayServerScript", {
-        SERVERHOOK_CAN_PACKET_SEND
+        SERVERHOOK_CAN_PACKET_SEND,
+        SERVERHOOK_CAN_PACKET_RECEIVE
     }) {}
+
+    // The core answers "unknown" for the clone GUID; this also covers
+    // queries sent after the replay ended.
+    bool CanPacketReceive(WorldSession* session,
+        WorldPacket const& packet) override
+    {
+        if (packet.GetOpcode() != CMSG_NAME_QUERY || packet.size() < 8)
+            return true;
+
+        Player* player = session ? session->GetPlayer() : nullptr;
+        if (!player)
+            return true;
+
+        ObjectGuid const guid(packet.read<uint64>(0));
+        if (guid != GetReplayCloneGuid(player->GetGUID()) ||
+            sCharacterCache->GetCharacterCacheByGuid(guid))
+            return true;
+
+        WorldPacket response = BuildCloneNameQueryResponse(player, guid);
+        session->SendPacket(&response);
+        return false;
+    }
 
     bool CanPacketSend(WorldSession* session, WorldPacket const& packet) override
     {
@@ -1226,7 +1309,10 @@ public:
 private:
     static bool loadReplayDataForPlayer(Player* p, uint32 matchId)
     {
-        QueryResult result = CharacterDatabase.Query("SELECT id, arenaTypeId, typeId, contentSize, contents, mapId, timesWatched FROM character_arena_replays WHERE id = {}", matchId);
+        QueryResult result = CharacterDatabase.Query(
+            "SELECT id, arenaTypeId, typeId, contentSize, contents, mapId, "
+            "timesWatched, winnerPlayerGuids, loserPlayerGuids "
+            "FROM character_arena_replays WHERE id = {}", matchId);
         if (!result)
         {
             ChatHandler(p->GetSession()).PSendModuleSysMessage(MODULE_STRING, STRING_REPLAY_DATA_NOT_FOUND);
@@ -1242,16 +1328,87 @@ private:
             return false;
         }
 
+        ObjectGuid cloneGuid;
+        if (IsReplayParticipant(fields[7].Get<std::string>(), p->GetGUID()) ||
+            IsReplayParticipant(fields[8].Get<std::string>(), p->GetGUID()))
+        {
+            cloneGuid = GetReplayCloneGuid(p->GetGUID());
+            if (!IsReplayCloneGuidSafe(cloneGuid))
+            {
+                ChatHandler(p->GetSession()).PSendModuleSysMessage(
+                    MODULE_STRING, STRING_REPLAY_OWN_MATCH_BLOCKED);
+                CloseGossipMenuFor(p);
+                return false;
+            }
+        }
+
+        MatchRecord record;
+        deserializeMatchData(record, fields);
+
+        auto const isCompressed = [](PacketRecord const& packetRecord)
+        {
+            return packetRecord.packet.GetOpcode() ==
+                SMSG_COMPRESSED_UPDATE_OBJECT;
+        };
+
+        // Recorded before the core compressed in the socket: the rewriter
+        // can't read these, and dropping them leaves players out.
+        if (!cloneGuid.IsEmpty() && std::any_of(record.packets.begin(),
+            record.packets.end(), isCompressed))
+        {
+            ChatHandler(p->GetSession()).PSendModuleSysMessage(
+                MODULE_STRING, STRING_REPLAY_OWN_MATCH_BLOCKED);
+            CloseGossipMenuFor(p);
+            return false;
+        }
+
         // Update 'timesWatched' of a Replay +1 everytime someone watches it
         uint32 timesWatched = fields[6].Get<uint32>();
         timesWatched++;
         CharacterDatabase.Execute("UPDATE character_arena_replays SET timesWatched = {} WHERE id = {}", timesWatched, matchId);
 
-        MatchRecord record;
-        deserializeMatchData(record, fields);
+        if (!cloneGuid.IsEmpty())
+            rewriteReplayForClone(p, record, cloneGuid, matchId);
 
         loadedReplays[p->GetGUID().GetCounter()] = std::move(record);
         return true;
+    }
+
+    // The recorded packets carry the watcher's own GUID, which its client
+    // would apply to the watcher itself.
+    static void rewriteReplayForClone(Player* watcher, MatchRecord& record,
+        ObjectGuid cloneGuid, uint32 matchId)
+    {
+        WorldPacket const cloneName =
+            BuildCloneNameQueryResponse(watcher, cloneGuid);
+        std::deque<PacketRecord> packets;
+        uint32 unreadable = 0;
+
+        for (PacketRecord& packetRecord : record.packets)
+        {
+            switch (RewriteReplayPacketForClone(packetRecord.packet,
+                watcher->GetGUID(), cloneGuid))
+            {
+                case CloneRewriteResult::Send:
+                    packets.push_back(std::move(packetRecord));
+                    break;
+                case CloneRewriteResult::CloneNameQuery:
+                    packets.push_back({ packetRecord.timestamp, cloneName });
+                    break;
+                case CloneRewriteResult::DropUnreadable:
+                    ++unreadable;
+                    break;
+                case CloneRewriteResult::Drop:
+                    break;
+            }
+        }
+
+        if (unreadable)
+            LOG_WARN("module", "ArenaReplay: dropped {} unreadable packets "
+                "from replay {} for {}", unreadable, matchId,
+                watcher->GetGUID().ToString());
+
+        record.packets = std::move(packets);
     }
 
     static void deserializeMatchData(MatchRecord& record, Field* fields)
