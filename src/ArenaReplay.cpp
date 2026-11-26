@@ -1162,9 +1162,6 @@ public:
             return false;
         }
 
-        // a replay still waiting for this watcher would keep its BG forever
-        ReleasePendingReplayArrival(player->GetGUID().GetCounter());
-
         if (!loadReplayDataForPlayer(player, replayId))
         {
             CloseGossipMenuFor(player);
