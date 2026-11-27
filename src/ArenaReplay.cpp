@@ -5,14 +5,17 @@
 #include "ArenaReplayDatabaseConnection.h"
 #include "ArenaReplay_loader.h"
 #include "ArenaTeamMgr.h"
+#include "AsyncCallbackProcessor.h"
 #include "Base32.h"
 #include "Battleground.h"
 #include "BattlegroundMgr.h"
 #include "CharacterDatabase.h"
 #include "Chat.h"
 #include "Config.h"
+#include "DatabaseEnv.h"
 #include "Log.h"
 #include "Map.h"
+#include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Opcodes.h"
 #include "Player.h"
@@ -20,7 +23,9 @@
 #include "ScriptedGossip.h"
 #include "ScriptMgr.h"
 #include <algorithm>
+#include <atomic>
 #include <iomanip>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 
@@ -231,6 +236,12 @@ struct MatchRecord { BattlegroundTypeId typeId; uint8 arenaTypeId; uint32 mapId;
 struct BgPlayersGuids { std::string alliancePlayerGuids; std::string hordePlayerGuids; };
 struct PendingReplayArrival { uint32 instanceId; TeamId teamId; };
 std::unordered_map<uint32, MatchRecord> records;
+// The module assigns replay ids itself so the id announced to players is the
+// id the row is stored under. Arenas can end on concurrent map threads, so the
+// counter is atomic and the callback queue is locked.
+std::atomic<uint32> nextReplayId{ 1 };
+AsyncCallbackProcessor<TransactionCallback> replaySaveCallbacks;
+std::mutex replaySaveCallbacksLock;
 std::unordered_map<uint64, MatchRecord> loadedReplays;
 std::unordered_map<uint32, uint32> bgReplayIds;
 std::unordered_map<uint32, BgPlayersGuids> bgPlayersGuids;
@@ -541,6 +552,7 @@ public:
             winnerGuids = bgPlayersGuids[bg->GetInstanceID()].hordePlayerGuids;
         }
 
+        std::vector<ObjectGuid> recipients;
         for (const auto& playerPair : bg->GetPlayers())
         {
             Player* player = playerPair.second;
@@ -565,17 +577,7 @@ public:
                 teamLoserMMR = teamMMR;
             }
 
-            // Send replay ID to player after a game end
-            uint32 replayfightid = 0;
-            QueryResult qResult = CharacterDatabase.Query("SELECT MAX(`id`) AS max_id FROM `character_arena_replays`");
-            if (qResult)
-            {
-                do
-                {
-                    replayfightid = qResult->Fetch()[0].Get<uint32>();
-                } while (qResult->NextRow());
-            }
-            ChatHandler(player->GetSession()).PSendModuleSysMessage(MODULE_STRING, STRING_REPLAY_SAVED, replayfightid + 1);
+            recipients.push_back(player->GetGUID());
         }
 
         const uint8 ARENA_TYPE_3V3_SOLO_QUEUE = sConfigMgr->GetOption<uint8>("ArenaReplay.3v3soloQ.ArenaType", 4);
@@ -601,31 +603,70 @@ public:
         teamLoserMMR=0;
         teamWinnerMMR=0;
 
-        CharacterDatabase.Execute("INSERT INTO `character_arena_replays` "
-            //   1             2            3            4          5          6                  7                    8
-            "(`arenaTypeId`, `typeId`, `contentSize`, `contents`, `mapId`, `winnerTeamName`, `winnerTeamRating`, `winnerTeamMMR`, "
-            //    9                10                 11                 12                 13
-            "`loserTeamName`, `loserTeamRating`, `loserTeamMMR`, `winnerPlayerGuids`, `loserPlayerGuids`) "
+        uint32 const replayId = nextReplayId++;
 
-            "VALUES ({}, {}, {}, \"{}\", {}, '{}', {}, {}, '{}', {}, {}, \"{}\", \"{}\")",
-            //       1   2    3     4    5    6    7   8    9    10  11    12      13
+        CharacterDatabaseTransaction trans =
+            CharacterDatabase.BeginTransaction();
+        trans->Append("INSERT INTO `character_arena_replays` "
+            // 1     2              3         4              5
+            "(`id`, `arenaTypeId`, `typeId`, `contentSize`, `contents`, "
+            // 6       7                 8                   9
+            "`mapId`, `winnerTeamName`, `winnerTeamRating`, `winnerTeamMMR`, "
+            // 10              11                 12
+            "`loserTeamName`, `loserTeamRating`, `loserTeamMMR`, "
+            // 13                  14
+            "`winnerPlayerGuids`, `loserPlayerGuids`) "
 
-            uint32(match.arenaTypeId), // 1
-            uint32(match.typeId),      // 2
-            buffer.size(),             // 3
-            Acore::Encoding::Base32::Encode(buffer.contentsAsVector()), // 4
-            bg->GetMapId(),    // 5
-            teamWinnerName,    // 6
-            teamWinnerRating,  // 7
-            teamWinnerMMR,     // 8
-            teamLoserName,     // 9
-            teamLoserRating,   // 10
-            teamLoserMMR,      // 11
-            winnerGuids,       // 12
-            loserGuids         // 13
+            "VALUES ({}, {}, {}, {}, \"{}\", {}, '{}', "
+            //       1   2   3   4     5     6    7
+            "{}, {}, '{}', {}, {}, \"{}\", \"{}\")",
+            // 8 9    10   11  12    13      14
+
+            replayId,                  // 1
+            uint32(match.arenaTypeId), // 2
+            uint32(match.typeId),      // 3
+            buffer.size(),             // 4
+            Acore::Encoding::Base32::Encode(buffer.contentsAsVector()), // 5
+            bg->GetMapId(),    // 6
+            teamWinnerName,    // 7
+            teamWinnerRating,  // 8
+            teamWinnerMMR,     // 9
+            teamLoserName,     // 10
+            teamLoserRating,   // 11
+            teamLoserMMR,      // 12
+            winnerGuids,       // 13
+            loserGuids         // 14
         );
 
+        TransactionCallback callback =
+            CharacterDatabase.AsyncCommitTransaction(trans);
+        callback.AfterComplete(
+            [replayId, instanceId = bg->GetInstanceID(), mapId = bg->GetMapId(),
+                recipients = std::move(recipients)](bool success)
+            {
+                if (!success)
+                {
+                    LOG_ERROR("module", "ArenaReplay: failed to save replay "
+                        "{} (instance {}, map {}); no replay-saved message "
+                        "was sent.", replayId, instanceId, mapId);
+                    return;
+                }
+
+                for (ObjectGuid const& guid : recipients)
+                {
+                    Player* player = ObjectAccessor::FindConnectedPlayer(guid);
+                    if (!player)
+                        continue;
+
+                    ChatHandler(player->GetSession()).PSendModuleSysMessage(
+                        MODULE_STRING, STRING_REPLAY_SAVED, replayId);
+                }
+            });
+
         records.erase(it);
+
+        std::lock_guard<std::mutex> lock(replaySaveCallbacksLock);
+        replaySaveCallbacks.AddCallback(std::move(callback));
     }
 
 private:
@@ -1520,15 +1561,25 @@ class ConfigLoaderArenaReplay : public WorldScript
 {
 public:
     ConfigLoaderArenaReplay() : WorldScript("config_loader_arena_replay", {
-        WORLDHOOK_ON_AFTER_CONFIG_LOAD
+        WORLDHOOK_ON_AFTER_CONFIG_LOAD,
+        WORLDHOOK_ON_UPDATE
     }) {}
-    virtual void OnAfterConfigLoad(bool /*Reload*/) override
+    virtual void OnAfterConfigLoad(bool reload) override
     {
+        if (!reload)
+            LoadNextReplayId();
+
         ArenaReplayEnable =
             sConfigMgr->GetOption<bool>("ArenaReplay.Enable", true);
         ReplayCommandEnable =
             sConfigMgr->GetOption<bool>("ArenaReplay.Command.Enable", true);
         DeleteOldReplays();
+    }
+
+    void OnUpdate(uint32 /*diff*/) override
+    {
+        std::lock_guard<std::mutex> lock(replaySaveCallbacksLock);
+        replaySaveCallbacks.ProcessReadyCallbacks();
     }
 
 private:
@@ -1551,6 +1602,14 @@ private:
             if (deleteSavedReplays)
                 CharacterDatabase.Execute("DELETE FROM `character_saved_replays` WHERE `replay_id` NOT IN (SELECT `id` FROM `character_arena_replays`)");
         }
+    }
+
+    void LoadNextReplayId()
+    {
+        QueryResult result = CharacterDatabase.Query(
+            "SELECT MAX(`id`) FROM `character_arena_replays`");
+        if (result)
+            nextReplayId = (*result)[0].Get<uint32>() + 1;
     }
 };
 
