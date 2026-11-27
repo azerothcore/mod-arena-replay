@@ -346,6 +346,25 @@ static void SendDueReplayPackets(Battleground* bg, MatchRecord& match)
     }
 }
 
+// Raises the replay id counter past the highest stored id, never lowering it,
+// so a failed or colliding save does not keep reusing ids that already exist.
+static void LoadNextReplayId()
+{
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT MAX(`id`) FROM `character_arena_replays`");
+    if (!result)
+    {
+        LOG_ERROR("module", "ArenaReplay: could not read the highest replay "
+            "id; new replays may fail to save.");
+        return;
+    }
+
+    uint32 const next = (*result)[0].Get<uint32>() + 1;
+    uint32 current = nextReplayId.load();
+    while (current < next
+           && !nextReplayId.compare_exchange_weak(current, next)) { }
+}
+
 // Drops the invite that keeps an empty replay BG alive during the loading
 // screen, so the core deletes the BG on its next update.
 static void ReleasePendingReplayArrival(uint32 watcherCounter)
@@ -750,6 +769,7 @@ public:
                     LOG_ERROR("module", "ArenaReplay: failed to save replay "
                         "{} (instance {}, map {}); no replay-saved message "
                         "was sent.", replayId, instanceId, mapId);
+                    LoadNextReplayId();
                     return;
                 }
 
@@ -1735,14 +1755,6 @@ private:
             if (deleteSavedReplays)
                 CharacterDatabase.Execute("DELETE FROM `character_saved_replays` WHERE `replay_id` NOT IN (SELECT `id` FROM `character_arena_replays`)");
         }
-    }
-
-    void LoadNextReplayId()
-    {
-        QueryResult result = CharacterDatabase.Query(
-            "SELECT MAX(`id`) FROM `character_arena_replays`");
-        if (result)
-            nextReplayId = (*result)[0].Get<uint32>() + 1;
     }
 };
 
