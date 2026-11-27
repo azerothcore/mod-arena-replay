@@ -19,7 +19,9 @@
 #include "QueryPackets.h"
 #include "ScriptedGossip.h"
 #include "ScriptMgr.h"
+#include "Timer.h"
 #include <algorithm>
+#include <bit>
 #include <iomanip>
 #include <optional>
 #include <unordered_map>
@@ -227,7 +229,14 @@ static WorldPacket BuildCloneNameQueryResponse(Player const* watcher,
 }
 
 struct PacketRecord { uint32 timestamp; WorldPacket packet; };
-struct MatchRecord { BattlegroundTypeId typeId; uint8 arenaTypeId; uint32 mapId; std::deque<PacketRecord> packets; };
+struct MatchRecord
+{
+    BattlegroundTypeId typeId;
+    uint8 arenaTypeId;
+    uint32 mapId;
+    std::deque<PacketRecord> packets;
+    bool ClockAligned = false;
+};
 struct BgPlayersGuids { std::string alliancePlayerGuids; std::string hordePlayerGuids; };
 struct PendingReplayArrival { uint32 instanceId; TeamId teamId; };
 std::unordered_map<uint32, MatchRecord> records;
@@ -235,6 +244,96 @@ std::unordered_map<uint64, MatchRecord> loadedReplays;
 std::unordered_map<uint32, uint32> bgReplayIds;
 std::unordered_map<uint32, BgPlayersGuids> bgPlayersGuids;
 std::unordered_map<uint32, PendingReplayArrival> pendingReplayArrivals;
+
+struct BgClockStep { uint32 StartTime; uint32 MSTime; };
+std::unordered_map<uint32, BgClockStep> bgClockSteps;
+
+// Cached on config load: read every world tick by the playback script.
+static bool ReplaySaveBattlegrounds = true;
+static bool ReplaySaveUnratedArenas = true;
+
+static void RecordBattlegroundStep(Battleground const* bg)
+{
+    bgClockSteps[bg->GetInstanceID()] = { bg->GetStartTime(), getMSTime() };
+}
+
+// StartTime only advances once per BATTLEGROUND_UPDATE_INTERVAL; add the ms
+// since that step, capped below the next one so the clock never goes back.
+static uint32 GetReplayClock(Battleground const* bg)
+{
+    auto const it = bgClockSteps.find(bg->GetInstanceID());
+    if (it == bgClockSteps.end())
+        return bg->GetStartTime();
+
+    uint32 const elapsed = std::min<uint32>(
+        GetMSTimeDiffToNow(it->second.MSTime),
+        BATTLEGROUND_UPDATE_INTERVAL - 1);
+    return it->second.StartTime + elapsed;
+}
+
+static bool IsReplayEnabledForBattleground(Battleground const* bg)
+{
+    if (!bg->isArena() && !ReplaySaveBattlegrounds)
+        return false;
+
+    if (!bg->isRated() && !ReplaySaveUnratedArenas)
+        return false;
+
+    return true;
+}
+
+// Live relays carry the move's time on the server clock; recorded copies
+// carry the original match's, so stamp the send time instead.
+static void RefreshReplayMovementTime(WorldPacket& packet)
+{
+    switch (packet.GetOpcode())
+    {
+        case MSG_MOVE_START_FORWARD:
+        case MSG_MOVE_START_BACKWARD:
+        case MSG_MOVE_STOP:
+        case MSG_MOVE_START_STRAFE_LEFT:
+        case MSG_MOVE_START_STRAFE_RIGHT:
+        case MSG_MOVE_STOP_STRAFE:
+        case MSG_MOVE_JUMP:
+        case MSG_MOVE_START_TURN_LEFT:
+        case MSG_MOVE_START_TURN_RIGHT:
+        case MSG_MOVE_STOP_TURN:
+        case MSG_MOVE_FALL_LAND:
+        case MSG_MOVE_SET_FACING:
+        case MSG_MOVE_HEARTBEAT:
+            break;
+        default:
+            return;
+    }
+
+    if (packet.empty())
+        return;
+
+    // packed GUID (mask byte + one byte per set bit), uint32 flags,
+    // uint16 flags2, then uint32 time
+    std::size_t const timePos = 1 + std::popcount(packet[0]) +
+        sizeof(uint32) + sizeof(uint16);
+    if (packet.size() < timePos + sizeof(uint32))
+        return;
+
+    packet.put<uint32>(timePos, getMSTime());
+}
+
+static void SendDueReplayPackets(Battleground* bg, MatchRecord& match)
+{
+    uint32 const clock = GetReplayClock(bg);
+    while (!match.packets.empty() && match.packets.front().timestamp <= clock)
+    {
+        if (bg->GetPlayers().empty())
+            break;
+
+        WorldPacket* myPacket = &match.packets.front().packet;
+        RefreshReplayMovementTime(*myPacket);
+        Player* replayer = bg->GetPlayers().begin()->second;
+        replayer->GetSession()->SendPacket(myPacket);
+        match.packets.pop_front();
+    }
+}
 
 // Drops the invite that keeps an empty replay BG alive during the loading
 // screen, so the core deletes the BG on its next update.
@@ -329,7 +428,7 @@ public:
             records[bg->GetInstanceID()].packets.clear();
         MatchRecord& record = records[bg->GetInstanceID()];
 
-        uint32 timestamp = bg->GetStartTime();
+        uint32 timestamp = GetReplayClock(bg);
         record.typeId = bg->GetBgTypeID();
         record.arenaTypeId = bg->GetArenaType();
         record.mapId = bg->GetMapId();
@@ -365,14 +464,13 @@ public:
 
     void OnBattlegroundUpdate(Battleground* bg, uint32 /* diff */) override
     {
+        RecordBattlegroundStep(bg);
+
         const bool isReplay = bgReplayIds.find(bg->GetInstanceID()) != bgReplayIds.end();
         if (!isReplay)
             return;
 
-        if (!bg->isArena() && !sConfigMgr->GetOption<bool>("ArenaReplay.SaveBattlegrounds", true))
-            return;
-
-        if (!bg->isRated() && !sConfigMgr->GetOption<bool>("ArenaReplay.SaveUnratedArenas", true))
+        if (!IsReplayEnabledForBattleground(bg))
             return;
 
         uint32 replayId = bgReplayIds.at(bg->GetInstanceID());
@@ -382,6 +480,7 @@ public:
         {
             bg->SetStartDelayTime(1000);
             bg->SetStartTime(bg->GetStartTime() + (startDelayTime - 1000));
+            RecordBattlegroundStep(bg);
         }
 
         if (bg->GetStatus() != BattlegroundStatus::STATUS_IN_PROGRESS)
@@ -405,16 +504,17 @@ public:
             return;
         }
 
-        //send replay data to spectator
-        while (!match.packets.empty() && match.packets.front().timestamp <= bg->GetStartTime())
+        // _ProcessJoin fires one start event per update, so the prep skip
+        // above leaves the clock ahead of the recording; align it once.
+        if (!match.ClockAligned)
         {
-            if (bg->GetPlayers().empty())
-                break;
-
-            WorldPacket* myPacket = &match.packets.front().packet;
-            Player* replayer = bg->GetPlayers().begin()->second;
-            replayer->GetSession()->SendPacket(myPacket);
-            match.packets.pop_front();
+            match.ClockAligned = true;
+            uint32 const firstTimestamp = match.packets.front().timestamp;
+            if (firstTimestamp < bg->GetStartTime())
+            {
+                bg->SetStartTime(firstTimestamp);
+                RecordBattlegroundStep(bg);
+            }
         }
     }
 
@@ -482,6 +582,7 @@ public:
     {
         bgReplayIds.erase(bg->GetInstanceID());
         bgPlayersGuids.erase(bg->GetInstanceID());
+        bgClockSteps.erase(bg->GetInstanceID());
     }
 
     void saveReplay(Battleground* bg, TeamId winnerTeamId)
@@ -663,6 +764,34 @@ private:
         }
 
         return teamName;
+    }
+};
+
+// OnBattlegroundUpdate only fires once per second; send due replay packets
+// every world tick instead.
+class ArenaReplayPlaybackScript : public WorldScript
+{
+public:
+    ArenaReplayPlaybackScript() : WorldScript("ArenaReplayPlaybackScript", {
+        WORLDHOOK_ON_UPDATE
+    }) {}
+
+    void OnUpdate(uint32 /*diff*/) override
+    {
+        for (auto const& [instanceId, replayId] : bgReplayIds)
+        {
+            Battleground* bg = sBattlegroundMgr->GetBattleground(
+                instanceId, BATTLEGROUND_TYPE_NONE);
+            if (!bg || bg->GetStatus() != STATUS_IN_PROGRESS ||
+                !IsReplayEnabledForBattleground(bg))
+                continue;
+
+            auto it = loadedReplays.find(replayId);
+            if (it == loadedReplays.end())
+                continue;
+
+            SendDueReplayPackets(bg, it->second);
+        }
     }
 };
 
@@ -1528,6 +1657,10 @@ public:
             sConfigMgr->GetOption<bool>("ArenaReplay.Enable", true);
         ReplayCommandEnable =
             sConfigMgr->GetOption<bool>("ArenaReplay.Command.Enable", true);
+        ReplaySaveBattlegrounds =
+            sConfigMgr->GetOption<bool>("ArenaReplay.SaveBattlegrounds", true);
+        ReplaySaveUnratedArenas =
+            sConfigMgr->GetOption<bool>("ArenaReplay.SaveUnratedArenas", true);
         DeleteOldReplays();
     }
 
@@ -1590,6 +1723,7 @@ void AddArenaReplayScripts()
     new ArenaReplayServerScript();
     new ArenaReplayPlayerScript();
     new ArenaReplayBGScript();
+    new ArenaReplayPlaybackScript();
     new ArenaReplayArenaScript();
     new ReplayGossip();
     new ArenaReplayCommandScript();
