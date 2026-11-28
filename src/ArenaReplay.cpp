@@ -745,14 +745,15 @@ public:
         TransactionCallback callback =
             CharacterDatabase.AsyncCommitTransaction(trans);
         callback.AfterComplete(
-            [saveToken, instanceId = bg->GetInstanceID(), mapId = bg->GetMapId(),
+            [saveToken, instanceId = bg->GetInstanceID(),
+                mapId = bg->GetMapId(),
                 recipients = std::move(recipients)](bool success) mutable
             {
                 if (!success)
                 {
-                    LOG_ERROR("module", "ArenaReplay: failed to save the replay "
-                        "of instance {} (map {}); no replay-saved message was "
-                        "sent.", instanceId, mapId);
+                    LOG_ERROR("module", "ArenaReplay: failed to save the "
+                        "replay of instance {} (map {}); no replay-saved "
+                        "message was sent.", instanceId, mapId);
                     return;
                 }
 
@@ -767,10 +768,10 @@ public:
                     {
                         if (!result)
                         {
-                            LOG_ERROR("module", "ArenaReplay: saved the replay "
-                                "of instance {} (map {}) but could not read its "
-                                "id; no replay-saved message was sent.",
-                                instanceId, mapId);
+                            LOG_ERROR("module", "ArenaReplay: saved the "
+                                "replay of instance {} (map {}) but could not "
+                                "read its id; no replay-saved message was "
+                                "sent.", instanceId, mapId);
                             return;
                         }
 
@@ -782,8 +783,9 @@ public:
                             if (!player)
                                 continue;
 
-                            ChatHandler(player->GetSession()).PSendModuleSysMessage(
-                                MODULE_STRING, STRING_REPLAY_SAVED, replayId);
+                            ChatHandler(player->GetSession())
+                                .PSendModuleSysMessage(MODULE_STRING,
+                                    STRING_REPLAY_SAVED, replayId);
                         }
                     }));
             });
